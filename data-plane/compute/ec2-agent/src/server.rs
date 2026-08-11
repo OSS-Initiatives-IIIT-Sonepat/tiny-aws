@@ -1,9 +1,9 @@
 use crate::node::Node;
+use serde_json::to_string;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 pub async fn start(node: &Node) -> Result<(), Box<dyn std::error::Error>> {
-    // pub: The server now receives the node it is serving.
     let listener = TcpListener::bind("127.0.0.1:8080").await?;
 
     println!("ec2-agent listening on 127.0.0.1:8080");
@@ -13,23 +13,43 @@ pub async fn start(node: &Node) -> Result<(), Box<dyn std::error::Error>> {
 
         println!("connection from {}", address);
 
-        let mut buffer = [0u8; 1024];
+        let mut buffer = [0u8; 4096];
 
         let bytes_read = socket.read(&mut buffer).await?;
 
         let request = String::from_utf8_lossy(&buffer[..bytes_read]);
 
-        println!("request:\n{}", request);
+        let path = request
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .unwrap_or("/");
 
-        let body = format!(
-            "node_id={}\nhostname={}\ncpu_count={}\n",
-            node.id,
-            node.system.hostname,
-            node.system.cpu_count
-        );
+        let (status, body) = match path {
+            "/health" => (
+                "200 OK",
+                r#"{"status":"healthy"}"#.to_string(),
+            ),
+
+            "/info" => (
+                "200 OK",
+                to_string(node)?,
+            ),
+
+            _ => (
+                "404 Not Found",
+                r#"{"error":"not found"}"#.to_string(),
+            ),
+        };
 
         let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
+            "HTTP/1.1 {}\r\n\
+             Content-Type: application/json\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n\
+             \r\n\
+             {}",
+            status,
             body.len(),
             body
         );

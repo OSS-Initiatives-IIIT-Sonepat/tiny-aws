@@ -1,5 +1,7 @@
 use crate::system::SystemInfo;
+use serde::Serialize;
 
+#[derive(Debug, Serialize, Clone)]
 pub struct Node {
     pub id: String,
     pub system: SystemInfo,

@@ -1,0 +1,64 @@
+# Build & dependency artifacts
+target/
+bin/
+dist/
+build/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.pdb
+*.rlib
+*.rmeta
+
+# Cargo lock file (usually not committed for libraries)
+# Cargo.lock
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# IDE & Editor
+.vscode/
+.idea/
+*.sublime-*
+*.code-workspace
+.vs/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Temporary files
+*.swp
+*.swo
+*.tmp
+*.temp
+*.bak
+*~
+.#*
+
+# Test & coverage
+coverage/
+.nyc_output/
+*.lcov
+
+# Node/npm (if used for tooling)
+node_modules/
+package-lock.json
+yarn.lock
+
+# OS specific
+Thumbs.db
+.DS_Store
+ehthumbs.db
+
+# Rust
+Cargo.lock
+.cargo/

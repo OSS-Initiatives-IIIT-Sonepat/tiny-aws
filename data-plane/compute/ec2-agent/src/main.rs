@@ -3,6 +3,15 @@ use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let hostname = hostname::get()?
+        .to_string_lossy()
+        .to_string();
+
+    let cpu_count = num_cpus::get();
+
+    println!("node: {}", hostname);
+    println!("cpus: {}", cpu_count);
+
     let listener = TcpListener::bind("127.0.0.1:8080").await?;
 
     println!("ec2-agent listening on 127.0.0.1:8080");

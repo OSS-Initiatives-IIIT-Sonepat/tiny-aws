@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -21,8 +22,11 @@ type Heartbeat struct {
 	ID string `json:"id"`
 }
 
-// nodes map 
-var nodes = make(map[string]Node)
+// nodes map with mutex for thread-safe access
+var (
+	nodes   = make(map[string]Node)
+	nodesMu sync.RWMutex
+)
 
 func main () {
 	
@@ -50,6 +54,9 @@ func handleNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	nodesMu.RLock()
+	defer nodesMu.RUnlock()
+
 	log.Println("GET /nodes")
 	if err := json.NewEncoder(w).Encode(nodes); err != nil {
 		http.Error(w, "failed to encode nodes", http.StatusInternalServerError)
@@ -75,8 +82,10 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	node.Status = "healthy"
 	node.LastSeen = time.Now()
 
-	// add the node to the nodes map
+	// acquire write lock before modifying nodes map
+	nodesMu.Lock()
 	nodes[node.ID] = node
+	nodesMu.Unlock()
 
 	log.Printf("POST /nodes/register - node %s registered", node.ID)
 
@@ -104,7 +113,8 @@ func handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// update node's last_seen and status
+	// acquire write lock before modifying nodes map
+	nodesMu.Lock()
 	if node, exists := nodes[heartbeat.ID]; exists {
 		node.LastSeen = time.Now()
 		node.Status = "healthy"
@@ -112,24 +122,28 @@ func handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 
 		log.Printf("POST /nodes/heartbeat - node %s heartbeat received", heartbeat.ID)
 
+		nodesMu.Unlock()
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(node)
 	} else {
 		log.Printf("POST /nodes/heartbeat - node %s not found", heartbeat.ID)
+		nodesMu.Unlock()
 		http.Error(w, "node not found", http.StatusNotFound)
 	}
 
 }
 
 func checkNodesHealth() {
-	ticker := time.NewTicker(10 *time.Second);
+	ticker := time.NewTicker(10 * time.Second)
 
 	defer ticker.Stop()
 
 	for range ticker.C {
 		now := time.Now()
 
+		nodesMu.Lock()
 		for id, node := range nodes {
 			if now.Sub(node.LastSeen) > 30*time.Second {
 				if node.Status == "healthy" {
@@ -140,9 +154,6 @@ func checkNodesHealth() {
 				nodes[id] = node
 			}
 		}
+		nodesMu.Unlock()
 	}
-
-
-
-
 }

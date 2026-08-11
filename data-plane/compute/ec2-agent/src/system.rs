@@ -29,3 +29,42 @@ pub fn get_system_info() -> SystemInfo {
         architecture: System::cpu_arch(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_system_info_structure() {
+        let system_info = SystemInfo {
+            hostname: "test-host".to_string(),
+            cpu_count: 8,
+            memory_total_mb: 16384,
+            memory_available_mb: 8192,
+            operating_system: "Linux".to_string(),
+            architecture: "x86_64".to_string(),
+        };
+
+        assert_eq!(system_info.hostname, "test-host");
+        assert_eq!(system_info.cpu_count, 8);
+        assert!(system_info.memory_total_mb > 0);
+        assert!(system_info.memory_available_mb <= system_info.memory_total_mb);
+    }
+
+    #[test]
+    fn test_system_info_serialization() {
+        let system_info = SystemInfo {
+            hostname: "test-host".to_string(),
+            cpu_count: 4,
+            memory_total_mb: 8192,
+            memory_available_mb: 4096,
+            operating_system: "Windows".to_string(),
+            architecture: "arm64".to_string(),
+        };
+
+        // Verify it can be serialized to JSON
+        let json = serde_json::to_string(&system_info).expect("serialization failed");
+        assert!(json.contains("test-host"));
+        assert!(json.contains("\"cpu_count\":4"));
+    }
+}

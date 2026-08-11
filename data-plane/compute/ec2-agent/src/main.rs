@@ -4,6 +4,7 @@ mod server;
 mod system;
 
 use node::NodeRegistration;
+use tokio::signal;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -34,7 +35,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     heartbeat::start_heartbeat(node.id.clone(), "http://127.0.0.1:9000").await;
 
-    server::start(&node).await?;
+    // Start server (blocks until Ctrl+C)
+    let ctrl_c = signal::ctrl_c();
+    
+    tokio::select! {
+        _ = server::start(&node) => {
+            println!("server stopped");
+        }
+        _ = ctrl_c => {
+            println!("\nshutting down gracefully...");
+        }
+    }
+
+    println!("node shut down");
 
     Ok(())
 }

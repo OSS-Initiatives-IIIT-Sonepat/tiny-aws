@@ -31,6 +31,9 @@ func main () {
 	http.HandleFunc("/nodes/register", handleRegister)
 	http.HandleFunc("/nodes/heartbeat", handleHeartbeat)
 
+	// start health check goroutine
+	go checkNodesHealth()
+
 	log.Println("node registry listening on :9000")
 
 	if err := http.ListenAndServe(":9000", nil); err != nil {
@@ -47,6 +50,7 @@ func handleNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Println("GET /nodes")
 	if err := json.NewEncoder(w).Encode(nodes); err != nil {
 		http.Error(w, "failed to encode nodes", http.StatusInternalServerError)
 	}
@@ -73,6 +77,8 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 
 	// add the node to the nodes map
 	nodes[node.ID] = node
+
+	log.Printf("POST /nodes/register - node %s registered", node.ID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -104,11 +110,39 @@ func handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		node.Status = "healthy"
 		nodes[heartbeat.ID] = node
 
+		log.Printf("POST /nodes/heartbeat - node %s heartbeat received", heartbeat.ID)
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(node)
 	} else {
+		log.Printf("POST /nodes/heartbeat - node %s not found", heartbeat.ID)
 		http.Error(w, "node not found", http.StatusNotFound)
 	}
+
+}
+
+func checkNodesHealth() {
+	ticker := time.NewTicker(10 *time.Second);
+
+	defer ticker.Stop()
+
+	for range ticker.C {
+		now := time.Now()
+
+		for id, node := range nodes {
+			if now.Sub(node.LastSeen) > 30*time.Second {
+				if node.Status == "healthy" {
+					log.Printf("node %s became unhealthy", id)
+				}
+
+				node.Status = "unhealthy"
+				nodes[id] = node
+			}
+		}
+	}
+
+
+
 
 }

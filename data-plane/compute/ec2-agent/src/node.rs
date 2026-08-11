@@ -1,5 +1,5 @@
 use crate::system::SystemInfo;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 #[derive(Debug, Serialize, Clone)]
 pub struct Node {
@@ -15,7 +15,7 @@ impl Node {
 }
 
 //derive smaller object - speciific to the network api
-#[derive(Debug, Deserialize)] 
+#[derive(Debug, Serialize)] 
 pub struct NodeRegistration {
     pub id:        String, 
     pub hostname:  String,

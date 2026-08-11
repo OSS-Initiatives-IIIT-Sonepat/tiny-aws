@@ -1,3 +1,4 @@
+mod heartbeat;
 mod node;
 mod server;
 mod system;
@@ -30,6 +31,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .error_for_status()?;
 
     println!("node registered with control plane");
+
+    heartbeat::start_heartbeat(node.id.clone(), "http://127.0.0.1:9000").await;
 
     server::start(&node).await?;
 

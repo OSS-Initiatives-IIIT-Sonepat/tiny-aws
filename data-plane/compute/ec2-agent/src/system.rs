@@ -3,12 +3,12 @@ use sysinfo::System;
 
 #[derive(Debug, Serialize, Clone)]
 pub struct SystemInfo {
-    pub hostname: String,
-    pub cpu_count: usize,
-    pub memory_total_mb: u64,
+    pub hostname:            String,
+    pub cpu_count:           usize,
+    pub memory_total_mb:     u64,
     pub memory_available_mb: u64,
-    pub operating_system: String,
-    pub architecture: String,
+    pub operating_system:    String,
+    pub architecture:        String,
 }
 
 pub fn get_system_info() -> SystemInfo {

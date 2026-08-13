@@ -22,4 +22,10 @@ impl BlockStore {
     
         Ok(())
     }
+
+    pub fn delete_block(&self, id: &str) -> std::io::Result<()> {
+        let path = self.root.join(id);
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
 }

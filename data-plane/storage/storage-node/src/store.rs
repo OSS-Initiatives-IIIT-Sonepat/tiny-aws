@@ -28,4 +28,10 @@ impl BlockStore {
         std::fs::remove_file(path)?;
         Ok(())
     }
+
+    pub fn read_block(&self, id: &str) -> std::io::Result<Vec<u8>> {
+        let path = self.root.join(id);
+        let data = std::fs::read(path)?;
+        Ok(data)
+    }
 }

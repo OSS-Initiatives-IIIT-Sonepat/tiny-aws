@@ -14,6 +14,13 @@ fn main() -> std::io::Result<()> {
 
     store.write_block(&block)?;
 
+    let loaded = store.read_block("block-001")?;
+
+    println!("read: {}", String::from_utf8_lossy(&loaded));
+
+    store.delete_block("block-001")?;
+
+    println!("block deleted");
     println!("block written: {}", block.id);
 
     Ok(())

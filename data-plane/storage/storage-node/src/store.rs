@@ -14,4 +14,12 @@ impl BlockStore {
 
         Ok(Self {root})
     }
+
+    pub fn write_block(&self, block: &Block) -> std::io::Result<()> {
+        let path = self.root.join(&block.id);
+    
+        std::fs::write(path, &block.data)?;
+    
+        Ok(())
+    }
 }

@@ -1,14 +1,34 @@
+mod block;
+mod server;
+mod store;
+
+use axum::{routing::put, Router};
+use server::AppState;
+use std::path::PathBuf;
+use std::sync::Arc;
+
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = reqwest::Client::new();
+async fn main() -> std::io::Result<()> {
+    let store = store::BlockStore::new(PathBuf::from("data"))?;
 
-    let response = client
-        .get("http://172.25.48.67:9870/webhdfs/v1/tiny-aws?op=LISTSTATUS")
-        .send()
-        .await?;
+    let state = AppState {
+        store: Arc::new(store),
+    };
 
-    println!("status: {}", response.status());
-    println!("body: {}", response.text().await?);
+    let app = Router::new()
+        .route(
+            "/blocks/{id}",
+            put(server::put_block)
+                .get(server::get_block)
+                .delete(server::delete_block),
+        )
+        .with_state(state);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:7001").await?;
+
+    println!("object-store listening on 127.0.0.1:7001");
+
+    axum::serve(listener, app).await.unwrap();
 
     Ok(())
 }

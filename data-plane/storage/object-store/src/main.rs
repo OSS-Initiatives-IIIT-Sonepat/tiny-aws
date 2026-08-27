@@ -4,7 +4,7 @@ mod metadata;
 mod server;
 mod store;
 
-use axum::{routing::put, Router};
+use axum::{routing::get, routing::put, Router};
 use metadata::MetadataStore;
 use server::AppState;
 use std::path::PathBuf;
@@ -21,12 +21,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let app = Router::new()
+        .route("/blocks", get(server::list_blocks))
         .route(
             "/blocks/{id}",
             put(server::put_block)
                 .get(server::get_block)
                 .delete(server::delete_block),
         )
+        .route("/blocks/{id}/meta", get(server::get_block_meta))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:7001").await?;

@@ -1,9 +1,10 @@
-use crate::metadata::MetadataStore;
+use crate::metadata::{MetadataStore, ObjectMeta};
 use crate::store::BlockStore;
 use axum::{
     body::Bytes,
     extract::{Path, State},
     http::StatusCode,
+    Json,
 };
 use std::sync::Arc;
 
@@ -23,6 +24,11 @@ pub async fn put_block(
     state
         .store
         .write_block(&block)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    state
+        .metadata
+        .insert(&block.id, block.data.len() as i64)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(StatusCode::CREATED)
@@ -49,5 +55,31 @@ pub async fn delete_block(
         .delete_block(&id)
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
+    state.metadata.remove(&id).ok();
+
     Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn list_blocks(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<ObjectMeta>>, StatusCode> {
+    state
+        .metadata
+        .list()
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+pub async fn get_block_meta(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<ObjectMeta>, StatusCode> {
+    match state
+        .metadata
+        .get(&id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
+        Some(meta) => Ok(Json(meta)),
+        None => Err(StatusCode::NOT_FOUND),
+    }
 }

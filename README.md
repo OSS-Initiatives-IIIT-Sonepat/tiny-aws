@@ -14,6 +14,12 @@ A small AWS-like cloud platform.
 - Rust (latest stable)
 - CMake + C++17 compiler (Visual Studio Build Tools on Windows)
 
+## Start order (important)
+
+1. Registry first
+2. EC2 agent second
+3. Object store third
+
 ## Run locally
 
 ### Terminal 1 — Registry

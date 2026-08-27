@@ -1,4 +1,5 @@
 mod block;
+mod config;
 mod ffi;
 mod metadata;
 mod server;
@@ -12,12 +13,26 @@ use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let store = store::BlockStore::new(PathBuf::from("data"))?;
-    let metadata = MetadataStore::new("metadata.db")?;
+
+    let registry_url = config::registry_url();
+    let listen_addr = config::listen_addr();
+    let storage_root = config::storage_root();
+    let metadata_db = config::metadata_db();
+
+
+    let node_id = format!("storage-{}", hostname::get()?.to_string_lossy());
+    println!("node_id: {}", node_id);
+
+    registry::register_and_heartbeat(&registry_url, &node_id).await?;
+
+    let store = store::BlockStore::new(storage_root)?;
+    let metadata = MetadataStore::new(metadata_db)?;
 
     let state = AppState {
         store: Arc::new(store),
         metadata: Arc::new(metadata),
+        registry_url,
+        node_id,
     };
 
     let app = Router::new()
@@ -31,9 +46,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/blocks/{id}/meta", get(server::get_block_meta))
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:7001").await?;
+    let listener = tokio::net::TcpListener::bind(&listen_addr).await?;
 
-    println!("object-store listening on 127.0.0.1:7001");
+    println!("object-store listening on {}", listen_addr);
 
     axum::serve(listener, app).await.unwrap();
 

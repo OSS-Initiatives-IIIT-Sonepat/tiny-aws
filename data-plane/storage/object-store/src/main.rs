@@ -1,19 +1,23 @@
 mod block;
 mod ffi;
+mod metadata;
 mod server;
 mod store;
 
 use axum::{routing::put, Router};
+use metadata::MetadataStore;
 use server::AppState;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let store = store::BlockStore::new(PathBuf::from("data"))?;
+    let metadata = MetadataStore::new("metadata.db")?;
 
     let state = AppState {
         store: Arc::new(store),
+        metadata: Arc::new(metadata),
     };
 
     let app = Router::new()

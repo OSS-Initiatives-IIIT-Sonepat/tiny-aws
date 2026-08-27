@@ -1,3 +1,4 @@
+use crate::metadata::MetadataStore;
 use crate::store::BlockStore;
 use axum::{
     body::Bytes,
@@ -9,6 +10,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct AppState {
     pub store: Arc<BlockStore>,
+    pub metadata: Arc<MetadataStore>,
 }
 
 pub async fn put_block(

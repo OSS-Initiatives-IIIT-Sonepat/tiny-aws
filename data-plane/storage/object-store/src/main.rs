@@ -2,23 +2,21 @@ mod block;
 mod config;
 mod ffi;
 mod metadata;
+mod registry;
 mod server;
 mod store;
 
 use axum::{routing::get, routing::put, Router};
 use metadata::MetadataStore;
 use server::AppState;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-
     let registry_url = config::registry_url();
     let listen_addr = config::listen_addr();
     let storage_root = config::storage_root();
     let metadata_db = config::metadata_db();
-
 
     let node_id = format!("storage-{}", hostname::get()?.to_string_lossy());
     println!("node_id: {}", node_id);
@@ -31,8 +29,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState {
         store: Arc::new(store),
         metadata: Arc::new(metadata),
-        registry_url,
-        node_id,
     };
 
     let app = Router::new()

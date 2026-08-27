@@ -14,31 +14,22 @@ impl Node {
     }
 }
 
-//derive smaller object - speciific to the network api
-#[derive(Debug, Serialize)] 
+#[derive(Debug, Serialize)]
 pub struct NodeRegistration {
-    pub id:        String, 
+    pub id:        String,
     pub hostname:  String,
     pub cpu_count: usize,
     pub role:      String,
 }
 
 impl NodeRegistration {
-    pub fn from_node (node: &Node) -> Self {
+    pub fn from_node(node: &Node) -> Self {
         Self {
             id:        node.id.clone(),
             hostname:  node.system.hostname.clone(),
             cpu_count: node.system.cpu_count,
+            role:      "compute".to_string(),
         }
-    }
-}
-
-impl NodeRegistration {
-    pub fn from_node(node: &Node) -> Self {
-            id:        node.id.clone(),
-            hostname:  node.system.hostname.clone(),
-            cpu_count: node.system.cpu_count,
-            role:      "compute".to_string(),         
     }
 }
 
@@ -80,11 +71,9 @@ mod tests {
         assert_eq!(registration.id, "test-node");
         assert_eq!(registration.hostname, "test-node");
         assert_eq!(registration.cpu_count, 8);
+        assert_eq!(registration.role, "compute");
 
-        // Verify it can be serialized to JSON
         let json = serde_json::to_string(&registration).expect("serialization failed");
         assert!(json.contains("test-node"));
-
-        assert_eq!(registration.role, "compute");
     }
 }

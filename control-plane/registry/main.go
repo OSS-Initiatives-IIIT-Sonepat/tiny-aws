@@ -13,6 +13,7 @@ type Node struct {
 	ID        string    `json:"id"`
 	Hostname  string    `json:"hostname"`
 	CPUCount  int       `json:"cpu_count"`
+	Role	  string    `json:"role"`
 	Status    string    `json:"status"`
 	LastSeen  time.Time `json:"last_seen"`
 }
@@ -54,14 +55,31 @@ func handleNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	role := r.URL.Query().Get("role")
+
 	nodesMu.RLock()
 	defer nodesMu.RUnlock()
 
 	log.Println("GET /nodes")
-	if err := json.NewEncoder(w).Encode(nodes); err != nil {
-		http.Error(w, "failed to encode nodes", http.StatusInternalServerError)
+
+	if role == "" {
+		if err := json.NewEncoder(w).Encode(nodes); err != nil {
+			http.Error(w, "failed to encode nodes", http.StatusInternalServerError)
+		}
+		return
 	}
 
+	filtered := make(map[string]Node)
+
+	for id, node := range nodes {
+		if node.Role == role {
+			filtered[id] = node
+		}
+	}
+
+	if err := json.NewEncoder(w).Encode(filtered); err != nil {
+		http.Error(w, "failed to encode nodes", http.StatusInternalServerError)
+	}
 }
 
 func handleRegister(w http.ResponseWriter, r *http.Request) {
@@ -72,13 +90,15 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var node Node
-	// decode the request body into a Node struct
 	if err := json.NewDecoder(r.Body).Decode(&node); err != nil {
 		http.Error(w, "failed to decode node", http.StatusBadRequest)
 		return
 	}
 
-	// initialize node with status and last_seen
+	if node.Role == "" {
+		node.Role = "compute"
+	}
+
 	node.Status = "healthy"
 	node.LastSeen = time.Now()
 

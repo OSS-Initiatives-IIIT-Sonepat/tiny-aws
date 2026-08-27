@@ -62,3 +62,7 @@ ehthumbs.db
 # Rust
 Cargo.lock
 .cargo/
+
+# Storage runtime artifacts
+metadata.db
+data-plane/storage/engine/build/

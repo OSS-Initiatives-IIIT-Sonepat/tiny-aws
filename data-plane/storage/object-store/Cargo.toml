@@ -2,7 +2,11 @@
 name = "object-store"
 version = "0.1.0"
 edition = "2024"
+build = "build.rs"
 
 [dependencies]
 axum = "0.8.9"
 tokio = { version = "1.53.1", features = ["full"] }
+
+[build-dependencies]
+cmake = "0.1"

@@ -1,4 +1,5 @@
 mod block;
+mod ffi;
 mod server;
 mod store;
 

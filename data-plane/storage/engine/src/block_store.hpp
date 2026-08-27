@@ -1,9 +1,9 @@
-// declare the class: BlockStore
-
 #pragma once
+
+#include <cstdint>
+#include <filesystem>
 #include <string>
 #include <vector>
-#include <filesystem>
 
 namespace tiny {
 
@@ -11,8 +11,8 @@ class BlockStore {
 public:
     explicit BlockStore(std::filesystem::path root);
 
-    void put(const std::string& id, const std::vector<uint8_t>& data);
-    std::vector<uint8_t> get(const std::string& id);
+    void put(const std::string& id, const std::vector<std::uint8_t>& data);
+    std::vector<std::uint8_t> get(const std::string& id);
     void remove(const std::string& id);
 
 private:
@@ -20,4 +20,4 @@ private:
     std::filesystem::path path_for(const std::string& id) const;
 };
 
-}
+} // namespace tiny

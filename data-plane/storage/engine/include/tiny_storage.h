@@ -42,8 +42,8 @@ TinyStorageStatus tiny_storage_get(
 
 TinyStorageStatus tiny_storage_delete(TinyStorage* store, const char* id);
 
+void tiny_storage_free_buffer(uint8_t* data);
+
 #ifdef __cplusplus
-
 }
-
 #endif

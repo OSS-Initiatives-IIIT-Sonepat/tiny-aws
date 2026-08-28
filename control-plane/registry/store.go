@@ -35,6 +35,11 @@ func NewNodeStore(path string) *NodeStore {
 	return &NodeStore{db: db}
 }
 
+// DB exposes the underlying SQLite handle for other stores.
+func (s *NodeStore) DB() *sql.DB {
+	return s.db
+}
+
 func (s *NodeStore) Save(node Node) error {
 	_, err := s.db.Exec(
 		`INSERT INTO nodes (id, hostname, cpu_count, role, status, last_seen)

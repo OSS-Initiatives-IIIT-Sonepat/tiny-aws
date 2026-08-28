@@ -29,6 +29,7 @@ var (
 
 func main() {
 	store = NewNodeStore("registry.db")
+	instanceStore = NewInstanceStore(store.DB())
 
 	loaded, err := store.LoadAll()
 	if err != nil {
@@ -37,10 +38,18 @@ func main() {
 
 	nodes = loaded
 
+	loadedInst, err := instanceStore.LoadAll()
+	if err != nil {
+		log.Fatal(err)
+	}
+	instances = loadedInst
+
 	http.HandleFunc("/health", handleHealth)
 	http.HandleFunc("/nodes", handleNodes)
 	http.HandleFunc("/nodes/register", handleRegister)
 	http.HandleFunc("/nodes/heartbeat", handleHeartbeat)
+	http.HandleFunc("/instances", handleInstances)
+	http.HandleFunc("/instances/", handleInstanceByID)
 
 	go checkNodesHealth()
 

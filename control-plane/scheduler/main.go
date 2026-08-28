@@ -42,14 +42,25 @@ type JobUpdateRequest struct {
 }
 
 var (
-	counter uint64
-	jobs    = make(map[string]Job)
-	jobsMu  sync.RWMutex
-	jobSeq  uint64
+	counter  uint64
+	jobs     = make(map[string]Job)
+	jobsMu   sync.RWMutex
+	jobSeq   uint64
+	jobStore *JobStore
 )
 
 func main() {
 	registryURL := getenv("REGISTRY_URL", "http://127.0.0.1:9000")
+	dbPath := getenv("SCHEDULER_DB", "scheduler.db")
+
+	jobStore = NewJobStore(dbPath)	
+
+	loaded, maxSeq, err := jobStore.LoadAll()
+	if err != nil {
+		log.Fatal(err)
+	}
+	jobs = loaded
+	jobSeq = maxSeq
 
 	http.HandleFunc("GET /health", handleHealth)
 	http.HandleFunc("GET /schedule", func(w http.ResponseWriter, r *http.Request) {
@@ -146,6 +157,9 @@ func submitJob(w http.ResponseWriter, r *http.Request, registryURL string) {
 
 	jobsMu.Lock()
 	jobs[job.ID] = job
+	if err := jobStore.Save(job); err != nil {
+		log.Printf("failed to persist job %s: %v", job.ID, err)
+	}
 	jobsMu.Unlock()
 
 	log.Printf("POST /jobs - job %s assigned to node %s", job.ID, job.NodeID)
@@ -231,6 +245,9 @@ func updateJob(w http.ResponseWriter, r *http.Request, id string) {
 		job.FinishedAt = &now
 	}
 	jobs[job.ID] = job
+	if err := jobStore.Save(job); err != nil {
+		log.Printf("failed to persist job %s: %v", job.ID, err)
+	}
 	jobsMu.Unlock()
 
 	log.Printf("PATCH /jobs/%s - status=%s", id, req.Status)

@@ -27,19 +27,19 @@ function Test-Endpoint {
 Write-Host "tiny-aws integration smoke test"
 Write-Host ""
 
-Write-Host "[1/6] Service health"
+Write-Host "[1/7] Service health"
 Test-Endpoint "registry"      "http://127.0.0.1:9000/health"   '"status":"healthy"'
 Test-Endpoint "ec2-agent"     "http://127.0.0.1:8080/health"   '"status":"healthy"'
 Test-Endpoint "scheduler"     "http://127.0.0.1:9001/health"   '"status":"healthy"'
 
 Write-Host ""
-Write-Host "[2/6] Registry nodes"
+Write-Host "[2/7] Registry nodes"
 Test-Endpoint "nodes"         "http://127.0.0.1:9000/nodes"    "."
 Test-Endpoint "compute nodes" "http://127.0.0.1:9000/nodes?role=compute" "."
 Test-Endpoint "storage nodes" "http://127.0.0.1:9000/nodes?role=storage" "."
 
 Write-Host ""
-Write-Host "[3/6] Object store"
+Write-Host "[3/7] Object store"
 $objectKey = "smoke-test-$(Get-Date -Format 'HHmmss')"
 curl.exe -s -f -X PUT "http://127.0.0.1:7001/objects/$objectKey" -d "hello integration" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "object PUT failed" }
@@ -54,11 +54,11 @@ if ($meta -notmatch $objectKey) { throw "object meta missing key" }
 Write-Host "  object meta ok"
 
 Write-Host ""
-Write-Host "[4/6] Scheduler"
+Write-Host "[4/7] Scheduler"
 Test-Endpoint "schedule"      "http://127.0.0.1:9001/schedule" '"node_id"'
 
 Write-Host ""
-Write-Host "[5/6] Job submission"
+Write-Host "[5/7] Job submission"
 $jobResponse = Invoke-RestMethod -Uri "http://127.0.0.1:9001/jobs" `
     -Method Post `
     -ContentType "application/json" `
@@ -68,11 +68,10 @@ if (-not $jobResponse.node_id) { throw "job response missing node_id" }
 Write-Host "  submit job ok"
 
 Write-Host ""
-Write-Host "[6/6] Job execution"
+Write-Host "[6/7] Job execution"
 $jobId = $jobResponse.job_id
 $finalStatus = $null
 
-# Poll every 2s for up to 30s — agent needs time to pick up and run the job
 for ($i = 0; $i -lt 15; $i++) {
     Start-Sleep -Seconds 2
     $finalStatus = Invoke-RestMethod -Uri "http://127.0.0.1:9001/jobs/$jobId"
@@ -87,6 +86,21 @@ if ($finalStatus.status -ne "done") {
     throw "job did not complete in time (status=$($finalStatus.status))"
 }
 Write-Host "  job completed ok"
+
+Write-Host ""
+Write-Host "[7/7] Buckets"
+$bucket = "smoke-bucket-$(Get-Date -Format 'HHmmss')"
+curl.exe -s -f -X PUT "http://127.0.0.1:7001/buckets/$bucket" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "bucket create failed" }
+Write-Host "  create bucket ok"
+
+curl.exe -s -f -X PUT "http://127.0.0.1:7001/buckets/$bucket/objects/test.txt" -d "bucket hello" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "bucket object PUT failed" }
+Write-Host "  put bucket object ok"
+
+$bucketBody = curl.exe -s -f "http://127.0.0.1:7001/buckets/$bucket/objects/test.txt"
+if ($bucketBody -ne "bucket hello") { throw "bucket GET mismatch: $bucketBody" }
+Write-Host "  get bucket object ok"
 
 Write-Host ""
 Write-Host "ALL CHECKS PASSED"

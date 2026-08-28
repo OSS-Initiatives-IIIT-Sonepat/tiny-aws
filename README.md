@@ -112,6 +112,15 @@ curl.exe http://127.0.0.1:7001/objects/test-001/meta
 curl.exe http://127.0.0.1:7001/objects
 ```
 
+### Buckets
+
+```powershell
+curl.exe -X PUT http://127.0.0.1:7001/buckets/my-bucket
+curl.exe -X PUT http://127.0.0.1:7001/buckets/my-bucket/objects/file.txt -d "data"
+curl.exe http://127.0.0.1:7001/buckets/my-bucket/objects/file.txt
+curl.exe http://127.0.0.1:7001/buckets
+```
+
 ## Environment variables
 
 | Variable | Default | Used by |

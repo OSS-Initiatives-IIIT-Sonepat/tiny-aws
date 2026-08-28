@@ -65,6 +65,9 @@ go run . object put my-key --data "hello"
 go run . object get my-key
 go run . job submit "echo hello"
 go run . job status job-1 --wait
+go run . instance launch
+go run . instance list
+go run . instance terminate i-1
 ```
 
 ## Verify cluster

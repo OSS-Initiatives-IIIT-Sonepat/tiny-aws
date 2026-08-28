@@ -1,4 +1,4 @@
-.PHONY: registry agent storage
+.PHONY: registry agent storage scheduler
 
 registry:
 	cd control-plane/registry && go run .
@@ -8,3 +8,6 @@ agent:
 
 storage:
 	cd data-plane/storage/object-store && cargo run
+
+scheduler:
+	cd control-plane/scheduler && go run .

@@ -27,19 +27,19 @@ function Test-Endpoint {
 Write-Host "tiny-aws integration smoke test"
 Write-Host ""
 
-Write-Host "[1/5] Service health"
+Write-Host "[1/6] Service health"
 Test-Endpoint "registry"      "http://127.0.0.1:9000/health"   '"status":"healthy"'
 Test-Endpoint "ec2-agent"     "http://127.0.0.1:8080/health"   '"status":"healthy"'
 Test-Endpoint "scheduler"     "http://127.0.0.1:9001/health"   '"status":"healthy"'
 
 Write-Host ""
-Write-Host "[2/5] Registry nodes"
+Write-Host "[2/6] Registry nodes"
 Test-Endpoint "nodes"         "http://127.0.0.1:9000/nodes"    "."
 Test-Endpoint "compute nodes" "http://127.0.0.1:9000/nodes?role=compute" "."
 Test-Endpoint "storage nodes" "http://127.0.0.1:9000/nodes?role=storage" "."
 
 Write-Host ""
-Write-Host "[3/5] Object store"
+Write-Host "[3/6] Object store"
 $objectKey = "smoke-test-$(Get-Date -Format 'HHmmss')"
 curl.exe -s -f -X PUT "http://127.0.0.1:7001/objects/$objectKey" -d "hello integration" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "object PUT failed" }
@@ -54,18 +54,39 @@ if ($meta -notmatch $objectKey) { throw "object meta missing key" }
 Write-Host "  object meta ok"
 
 Write-Host ""
-Write-Host "[4/5] Scheduler"
+Write-Host "[4/6] Scheduler"
 Test-Endpoint "schedule"      "http://127.0.0.1:9001/schedule" '"node_id"'
 
 Write-Host ""
-Write-Host "[5/5] Job submission"
+Write-Host "[5/6] Job submission"
 $jobResponse = Invoke-RestMethod -Uri "http://127.0.0.1:9001/jobs" `
     -Method Post `
     -ContentType "application/json" `
     -Body '{"command":"echo hello"}'
-if (-not $jobResponse.job_id) { throw "job response missing job_id: $jobResponse" }
-if (-not $jobResponse.node_id) { throw "job response missing node_id: $jobResponse" }
+if (-not $jobResponse.job_id) { throw "job response missing job_id" }
+if (-not $jobResponse.node_id) { throw "job response missing node_id" }
 Write-Host "  submit job ok"
+
+Write-Host ""
+Write-Host "[6/6] Job execution"
+$jobId = $jobResponse.job_id
+$finalStatus = $null
+
+# Poll every 2s for up to 30s — agent needs time to pick up and run the job
+for ($i = 0; $i -lt 15; $i++) {
+    Start-Sleep -Seconds 2
+    $finalStatus = Invoke-RestMethod -Uri "http://127.0.0.1:9001/jobs/$jobId"
+
+    if ($finalStatus.status -eq "done") { break }
+    if ($finalStatus.status -eq "failed") {
+        throw "job failed: $($finalStatus | ConvertTo-Json -Compress)"
+    }
+}
+
+if ($finalStatus.status -ne "done") {
+    throw "job did not complete in time (status=$($finalStatus.status))"
+}
+Write-Host "  job completed ok"
 
 Write-Host ""
 Write-Host "ALL CHECKS PASSED"

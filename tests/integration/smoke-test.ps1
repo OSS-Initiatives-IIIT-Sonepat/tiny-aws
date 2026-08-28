@@ -27,19 +27,19 @@ function Test-Endpoint {
 Write-Host "tiny-aws integration smoke test"
 Write-Host ""
 
-Write-Host "[1/7] Service health"
+Write-Host "[1/8] Service health"
 Test-Endpoint "registry"      "http://127.0.0.1:9000/health"   '"status":"healthy"'
 Test-Endpoint "ec2-agent"     "http://127.0.0.1:8080/health"   '"status":"healthy"'
 Test-Endpoint "scheduler"     "http://127.0.0.1:9001/health"   '"status":"healthy"'
 
 Write-Host ""
-Write-Host "[2/7] Registry nodes"
+Write-Host "[2/8] Registry nodes"
 Test-Endpoint "nodes"         "http://127.0.0.1:9000/nodes"    "."
 Test-Endpoint "compute nodes" "http://127.0.0.1:9000/nodes?role=compute" "."
 Test-Endpoint "storage nodes" "http://127.0.0.1:9000/nodes?role=storage" "."
 
 Write-Host ""
-Write-Host "[3/7] Object store"
+Write-Host "[3/8] Object store"
 $objectKey = "smoke-test-$(Get-Date -Format 'HHmmss')"
 curl.exe -s -f -X PUT "http://127.0.0.1:7001/objects/$objectKey" -d "hello integration" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "object PUT failed" }
@@ -54,11 +54,11 @@ if ($meta -notmatch $objectKey) { throw "object meta missing key" }
 Write-Host "  object meta ok"
 
 Write-Host ""
-Write-Host "[4/7] Scheduler"
+Write-Host "[4/8] Scheduler"
 Test-Endpoint "schedule"      "http://127.0.0.1:9001/schedule" '"node_id"'
 
 Write-Host ""
-Write-Host "[5/7] Job submission"
+Write-Host "[5/8] Job submission"
 $jobResponse = Invoke-RestMethod -Uri "http://127.0.0.1:9001/jobs" `
     -Method Post `
     -ContentType "application/json" `
@@ -68,7 +68,7 @@ if (-not $jobResponse.node_id) { throw "job response missing node_id" }
 Write-Host "  submit job ok"
 
 Write-Host ""
-Write-Host "[6/7] Job execution"
+Write-Host "[6/8] Job execution"
 $jobId = $jobResponse.job_id
 $finalStatus = $null
 
@@ -88,7 +88,7 @@ if ($finalStatus.status -ne "done") {
 Write-Host "  job completed ok"
 
 Write-Host ""
-Write-Host "[7/7] Buckets"
+Write-Host "[7/8] Buckets"
 $bucket = "smoke-bucket-$(Get-Date -Format 'HHmmss')"
 curl.exe -s -f -X PUT "http://127.0.0.1:7001/buckets/$bucket" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "bucket create failed" }
@@ -101,6 +101,12 @@ Write-Host "  put bucket object ok"
 $bucketBody = curl.exe -s -f "http://127.0.0.1:7001/buckets/$bucket/objects/test.txt"
 if ($bucketBody -ne "bucket hello") { throw "bucket GET mismatch: $bucketBody" }
 Write-Host "  get bucket object ok"
+
+Write-Host ""
+Write-Host "[8/8] Instances"
+$inst = Invoke-RestMethod -Uri "http://127.0.0.1:9000/instances" -Method Post
+if (-not $inst.id) { throw "instance launch failed" }
+Write-Host "  launch instance ok"
 
 Write-Host ""
 Write-Host "ALL CHECKS PASSED"

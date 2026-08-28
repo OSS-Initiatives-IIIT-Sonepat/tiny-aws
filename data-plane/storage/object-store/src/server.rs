@@ -1,3 +1,5 @@
+use axum::http::HeaderMap;
+use sha2::{Digest, Sha256};
 use crate::metadata::{MetadataStore, ObjectMeta};
 use crate::store::BlockStore;
 use axum::{
@@ -17,18 +19,29 @@ pub struct AppState {
 pub async fn put_object(
     State(state): State<AppState>,
     Path(key): Path<String>,
+    headers: HeaderMap,
     body: Bytes,
 ) -> Result<StatusCode, StatusCode> {
-    let block = crate::block::Block::new(key, body.to_vec());
+    let data = body.to_vec();
+    let block = crate::block::Block::new(key.clone(), data.clone());
 
     state
         .store
         .write_block(&block)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    let content_type = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+
+    let hash = Sha256::digest(&data);
+    let etag = hex::encode(hash);
+
     state
         .metadata
-        .insert(&block.id, block.data.len() as i64)
+        .upsert(&key, data.len() as i64, &content_type, &etag)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(StatusCode::CREATED)

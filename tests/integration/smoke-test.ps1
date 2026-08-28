@@ -59,11 +59,12 @@ Test-Endpoint "schedule"      "http://127.0.0.1:9001/schedule" '"node_id"'
 
 Write-Host ""
 Write-Host "[5/5] Job submission"
-$jobBody = '{"command":"echo hello"}'
-$jobResponse = curl.exe -s -f -X POST "http://127.0.0.1:9001/jobs" -H "Content-Type: application/json" -d $jobBody
-if ($LASTEXITCODE -ne 0) { throw "job submission failed" }
-if ($jobResponse -notmatch '"job_id"') { throw "job response missing job_id: $jobResponse" }
-if ($jobResponse -notmatch '"node_id"') { throw "job response missing node_id: $jobResponse" }
+$jobResponse = Invoke-RestMethod -Uri "http://127.0.0.1:9001/jobs" `
+    -Method Post `
+    -ContentType "application/json" `
+    -Body '{"command":"echo hello"}'
+if (-not $jobResponse.job_id) { throw "job response missing job_id: $jobResponse" }
+if (-not $jobResponse.node_id) { throw "job response missing node_id: $jobResponse" }
 Write-Host "  submit job ok"
 
 Write-Host ""

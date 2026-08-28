@@ -1,6 +1,7 @@
 mod config;
 mod heartbeat;
 mod node;
+mod registry;
 mod server;
 mod system;
 
@@ -9,13 +10,10 @@ use tokio::signal;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-
     let registry_url = config::registry_url();
 
     let system_info = system::get_system_info();
-
     let node = node::Node::new(system_info);
-
     let registration = NodeRegistration::from_node(&node);
 
     println!("cpus: {}", node.system.cpu_count);
@@ -24,26 +22,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         node.system.memory_available_mb,
         node.system.memory_total_mb
     );
-
     println!("node: {}", node.id);
     println!("registry url: {}", registry_url);
 
-    let client = reqwest::Client::new();
-
-    client
-        .post("http://127.0.0.1:9000/nodes/register")
-        .json(&registration)
-        .send()
-        .await?
-        .error_for_status()?;
+    registry::register_with_retry(&registry_url, &registration).await?;
 
     println!("node registered with control plane");
 
     heartbeat::start_heartbeat(node.id.clone(), &registry_url).await;
 
-    // Start server (blocks until Ctrl+C)
     let ctrl_c = signal::ctrl_c();
-    
+
     tokio::select! {
         _ = server::start(&node) => {
             println!("server stopped");

@@ -40,11 +40,23 @@ impl MetadataStore {
         })
     }
 
-    pub fn insert(&self, id: &str, size: i64) -> rusqlite::Result<()> {
+    pub fn upsert(
+        &self,
+        id: &str,
+        size: i64,
+        content_type: &str,
+        etag: &str,
+    ) -> rusqlite::Result<()> {
         let conn = self.conn.lock().expect("metadata db mutex poisoned");
         conn.execute(
-            "INSERT OR REPLACE INTO objects (id, size) VALUES (?1, ?2)",
-            params![id, size],
+            "INSERT INTO objects (id, size, content_type, etag)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(id) DO UPDATE SET
+                size = excluded.size,
+                content_type = excluded.content_type,
+                etag = excluded.etag,
+                updated_at = datetime('now')",
+            params![id, size, content_type, etag],
         )?;
         Ok(())
     }

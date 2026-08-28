@@ -6,6 +6,7 @@ A small AWS-like cloud platform.
 
 - **control-plane/registry** (Go, :9000) — node registry (SQLite-backed)
 - **control-plane/scheduler** (Go, :9001) — picks healthy compute nodes
+- **control-plane/cli** — `tinyaws` command-line tool
 - **data-plane/compute/ec2-agent** (Rust, :8080) — compute agent
 - **data-plane/storage/object-store** (Rust + C++, :7001) — object storage
 
@@ -52,6 +53,18 @@ cargo run
 ```powershell
 cd control-plane/scheduler
 go run .
+```
+
+## CLI
+
+```powershell
+cd control-plane/cli
+go run . node list
+go run . node list --role compute
+go run . object put my-key --data "hello"
+go run . object get my-key
+go run . job submit "echo hello"
+go run . job status job-1 --wait
 ```
 
 ## Verify cluster
@@ -103,8 +116,9 @@ curl.exe http://127.0.0.1:7001/objects
 
 | Variable | Default | Used by |
 |----------|---------|---------|
-| `REGISTRY_URL` | `http://127.0.0.1:9000` | ec2-agent, object-store, scheduler |
-| `SCHEDULER_URL` | `http://127.0.0.1:9001` | smoke test (optional) |
+| `REGISTRY_URL` | `http://127.0.0.1:9000` | ec2-agent, object-store, scheduler, cli |
+| `SCHEDULER_URL` | `http://127.0.0.1:9001` | ec2-agent, cli |
+| `OBJECT_STORE_URL` | `http://127.0.0.1:7001` | cli |
 | `OBJECT_STORE_ADDR` | `127.0.0.1:7001` | object-store |
 | `STORAGE_ROOT` | `data` | object-store |
 | `METADATA_DB` | `metadata.db` | object-store |

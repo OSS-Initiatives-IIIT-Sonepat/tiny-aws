@@ -14,12 +14,12 @@ pub struct AppState {
     pub metadata: Arc<MetadataStore>,
 }
 
-pub async fn put_block(
+pub async fn put_object(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(key): Path<String>,
     body: Bytes,
 ) -> Result<StatusCode, StatusCode> {
-    let block = crate::block::Block::new(id, body.to_vec());
+    let block = crate::block::Block::new(key, body.to_vec());
 
     state
         .store
@@ -34,33 +34,33 @@ pub async fn put_block(
     Ok(StatusCode::CREATED)
 }
 
-pub async fn get_block(
+pub async fn get_object(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(key): Path<String>,
 ) -> Result<Bytes, StatusCode> {
     let data = state
         .store
-        .read_block(&id)
+        .read_block(&key)
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
     Ok(Bytes::from(data))
 }
 
-pub async fn delete_block(
+pub async fn delete_object(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(key): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
     state
         .store
-        .delete_block(&id)
+        .delete_block(&key)
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
-    state.metadata.remove(&id).ok();
+    state.metadata.remove(&key).ok();
 
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub async fn list_blocks(
+pub async fn list_objects(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<ObjectMeta>>, StatusCode> {
     state
@@ -70,13 +70,13 @@ pub async fn list_blocks(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-pub async fn get_block_meta(
+pub async fn get_object_meta(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(key): Path<String>,
 ) -> Result<Json<ObjectMeta>, StatusCode> {
     match state
         .metadata
-        .get(&id)
+        .get(&key)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
         Some(meta) => Ok(Json(meta)),

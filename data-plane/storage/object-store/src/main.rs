@@ -32,14 +32,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let app = Router::new()
-        .route("/blocks", get(server::list_blocks))
+        .route("/blocks", get(server::list_objects))
         .route(
-            "/blocks/{id}",
-            put(server::put_block)
-                .get(server::get_block)
-                .delete(server::delete_block),
+            "/objects/{id}",
+            put(server::put_object)
+                .get(server::get_object)
+                .delete(server::delete_object),
         )
-        .route("/blocks/{id}/meta", get(server::get_block_meta))
+        .route("/objects/{id}/meta", get(server::get_object_meta))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&listen_addr).await?;

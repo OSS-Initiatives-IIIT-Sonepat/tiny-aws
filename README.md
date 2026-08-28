@@ -108,3 +108,23 @@ curl.exe http://127.0.0.1:7001/objects
 | `OBJECT_STORE_ADDR` | `127.0.0.1:7001` | object-store |
 | `STORAGE_ROOT` | `data` | object-store |
 | `METADATA_DB` | `metadata.db` | object-store |
+
+## Job lifecycle
+
+1. Client submits: `POST /jobs` with `{"command":"echo hello"}`
+2. Scheduler assigns to a healthy compute node (`status: pending`)
+3. EC2 agent polls: `GET /jobs?node_id=<id>&status=pending`
+4. Agent marks running: `PATCH /jobs/{id}` with `{"status":"running"}`
+5. Agent runs command locally, reports: `PATCH /jobs/{id}` with `status`, `exit_code`, `stdout`, `stderr`
+6. Client checks: `GET /jobs/{id}`
+
+| Status | Meaning |
+|--------|---------|
+| `pending` | Assigned, waiting for agent |
+| `running` | Agent is executing |
+| `done` | Finished (exit code 0) |
+| `failed` | Command failed |
+
+```powershell
+$j = Invoke-RestMethod -Uri "http://127.0.0.1:9001/jobs" -Method Post -ContentType "application/json" -Body '{"command":"echo hello"}'
+Invoke-RestMethod "http://127.0.0.1:9001/jobs/$($j.job_id)"

@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let app = Router::new()
-        .route("/blocks", get(server::list_objects))
+        .route("/objects", get(server::list_objects))
         .route(
             "/objects/{id}",
             put(server::put_object)
@@ -40,6 +40,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .delete(server::delete_object),
         )
         .route("/objects/{id}/meta", get(server::get_object_meta))
+        .route("/buckets", get(server::list_buckets))
+        .route("/buckets/{bucket}", put(server::create_bucket))
+        .route("/buckets/{bucket}/objects", get(server::list_bucket_objects))
+        .route(
+            "/buckets/{bucket}/objects/{key}",
+            put(server::put_bucket_object)
+                .get(server::get_bucket_object)
+                .delete(server::delete_bucket_object),
+        )
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&listen_addr).await?;

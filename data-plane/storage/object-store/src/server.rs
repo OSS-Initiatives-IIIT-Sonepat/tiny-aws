@@ -1,6 +1,6 @@
 use axum::http::HeaderMap;
 use sha2::{Digest, Sha256};
-use crate::metadata::{MetadataStore, ObjectMeta};
+use crate::metadata::{BucketMeta, MetadataStore, ObjectMeta};
 use crate::store::BlockStore;
 use axum::{
     body::Bytes,
@@ -16,15 +16,14 @@ pub struct AppState {
     pub metadata: Arc<MetadataStore>,
 }
 
-pub async fn put_object(
-    State(state): State<AppState>,
-    Path(key): Path<String>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Result<StatusCode, StatusCode> {
-    let data = body.to_vec();
-    let block = crate::block::Block::new(key.clone(), data.clone());
-
+// Writes bytes to engine + metadata for a given object id.
+fn write_object(
+    state: &AppState,
+    key: &str,
+    headers: &HeaderMap,
+    data: Vec<u8>,
+) -> Result<(), StatusCode> {
+    let block = crate::block::Block::new(key.to_string(), data.clone());
     state
         .store
         .write_block(&block)
@@ -41,9 +40,19 @@ pub async fn put_object(
 
     state
         .metadata
-        .upsert(&key, data.len() as i64, &content_type, &etag)
+        .upsert(key, data.len() as i64, &content_type, &etag)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    Ok(())
+}
+
+pub async fn put_object(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<StatusCode, StatusCode> {
+    write_object(&state, &key, &headers, body.to_vec())?;
     Ok(StatusCode::CREATED)
 }
 
@@ -95,4 +104,83 @@ pub async fn get_object_meta(
         Some(meta) => Ok(Json(meta)),
         None => Err(StatusCode::NOT_FOUND),
     }
+}
+
+// POST /buckets/{bucket} — create bucket.
+pub async fn create_bucket(
+    State(state): State<AppState>,
+    Path(bucket): Path<String>,
+) -> Result<StatusCode, StatusCode> {
+    if state
+        .metadata
+        .bucket_exists(&bucket)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
+        return Err(StatusCode::CONFLICT);
+    }
+    state
+        .metadata
+        .create_bucket(&bucket)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(StatusCode::CREATED)
+}
+
+// GET /buckets — list buckets.
+pub async fn list_buckets(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<BucketMeta>>, StatusCode> {
+    state
+        .metadata
+        .list_buckets()
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+// PUT /buckets/{bucket}/objects/{key}.
+pub async fn put_bucket_object(
+    State(state): State<AppState>,
+    Path((bucket, key)): Path<(String, String)>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<StatusCode, StatusCode> {
+    if !state
+        .metadata
+        .bucket_exists(&bucket)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let object_id = MetadataStore::bucket_object_id(&bucket, &key);
+    write_object(&state, &object_id, &headers, body.to_vec())?;
+    Ok(StatusCode::CREATED)
+}
+
+// GET /buckets/{bucket}/objects/{key}.
+pub async fn get_bucket_object(
+    State(state): State<AppState>,
+    Path((bucket, key)): Path<(String, String)>,
+) -> Result<Bytes, StatusCode> {
+    let object_id = MetadataStore::bucket_object_id(&bucket, &key);
+    get_object(State(state), Path(object_id)).await
+}
+
+// DELETE /buckets/{bucket}/objects/{key}.
+pub async fn delete_bucket_object(
+    State(state): State<AppState>,
+    Path((bucket, key)): Path<(String, String)>,
+) -> Result<StatusCode, StatusCode> {
+    let object_id = MetadataStore::bucket_object_id(&bucket, &key);
+    delete_object(State(state), Path(object_id)).await
+}
+
+// GET /buckets/{bucket}/objects — list objects in bucket.
+pub async fn list_bucket_objects(
+    State(state): State<AppState>,
+    Path(bucket): Path<String>,
+) -> Result<Json<Vec<ObjectMeta>>, StatusCode> {
+    state
+        .metadata
+        .list_by_bucket(&bucket)
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }

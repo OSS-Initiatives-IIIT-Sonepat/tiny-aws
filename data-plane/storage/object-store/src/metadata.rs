@@ -30,14 +30,45 @@ impl MetadataStore {
             );",
         )?;
 
-        // migrate old DBs that lack new columns
-        let _ = conn.execute("ALTER TABLE objects ADD COLUMN content_type TEXT NOT NULL DEFAULT 'application/octet-stream'", []);
-        let _ = conn.execute("ALTER TABLE objects ADD COLUMN etag TEXT NOT NULL DEFAULT ''", []);
-        let _ = conn.execute("ALTER TABLE objects ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'))", []);
+        Self::migrate_schema(&conn)?;
 
         Ok(Self {
             conn: Mutex::new(conn),
         })
+    }
+
+    fn migrate_schema(conn: &Connection) -> rusqlite::Result<()> {
+        let mut stmt = conn.prepare("PRAGMA table_info(objects)")?;
+        let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let mut existing = std::collections::HashSet::new();
+        for col in columns {
+            existing.insert(col?);
+        }
+
+        if !existing.contains("content_type") {
+            conn.execute(
+                "ALTER TABLE objects ADD COLUMN content_type TEXT NOT NULL DEFAULT 'application/octet-stream'",
+                [],
+            )?;
+        }
+        if !existing.contains("etag") {
+            conn.execute(
+                "ALTER TABLE objects ADD COLUMN etag TEXT NOT NULL DEFAULT ''",
+                [],
+            )?;
+        }
+        if !existing.contains("updated_at") {
+            conn.execute(
+                "ALTER TABLE objects ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
+                [],
+            )?;
+            conn.execute(
+                "UPDATE objects SET updated_at = datetime('now') WHERE updated_at = ''",
+                [],
+            )?;
+        }
+
+        Ok(())
     }
 
     pub fn upsert(

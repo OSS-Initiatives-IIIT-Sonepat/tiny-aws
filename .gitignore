@@ -64,7 +64,10 @@ Cargo.lock
 .cargo/
 
 # Storage runtime artifacts
-metadata.db
-registry.db
-control-plane/registry/registry.db
+**/metadata.db
+**/registry.db
 data-plane/storage/engine/build/
+
+# Object store blob data (PUT /objects, smoke tests, local dev)
+data-plane/storage/object-store/data/*
+!data-plane/storage/object-store/data/.gitkeep

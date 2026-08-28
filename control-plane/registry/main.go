@@ -37,6 +37,7 @@ func main() {
 
 	nodes = loaded
 
+	http.HandleFunc("/health", handleHealth)
 	http.HandleFunc("/nodes", handleNodes)
 	http.HandleFunc("/nodes/register", handleRegister)
 	http.HandleFunc("/nodes/heartbeat", handleHeartbeat)
@@ -48,6 +49,19 @@ func main() {
 	if err := http.ListenAndServe(":9000", nil); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func handleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "healthy",
+		"service": "registry",
+	})
 }
 
 func handleNodes(w http.ResponseWriter, r *http.Request) {

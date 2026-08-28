@@ -44,12 +44,13 @@ func main() {
 	}
 	instances = loadedInst
 
-	http.HandleFunc("/health", handleHealth)
-	http.HandleFunc("/nodes", handleNodes)
-	http.HandleFunc("/nodes/register", handleRegister)
-	http.HandleFunc("/nodes/heartbeat", handleHeartbeat)
-	http.HandleFunc("/instances", handleInstances)
-	http.HandleFunc("/instances/", handleInstanceByID)
+	http.HandleFunc("GET /health", handleHealth)
+	http.HandleFunc("GET /nodes", handleNodes)
+	http.HandleFunc("POST /nodes/register", handleRegister)
+	http.HandleFunc("POST /nodes/heartbeat", handleHeartbeat)
+	http.HandleFunc("GET /instances", handleInstances)
+	http.HandleFunc("POST /instances", handleInstances)
+	http.HandleFunc("DELETE /instances/{id}", handleInstanceByID)
 
 	go checkNodesHealth()
 

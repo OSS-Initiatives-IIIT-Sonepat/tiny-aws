@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -113,20 +112,14 @@ func handleInstances(w http.ResponseWriter, r *http.Request) {
 		listInstances(w)
 	case http.MethodPost:
 		launchInstance(w)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
 // DELETE /instances/{id} — terminate instance.
 func handleInstanceByID(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimPrefix(r.URL.Path, "/instances/")
-	if id == "" || strings.Contains(id, "/") {
+	id := r.PathValue("id")
+	if id == "" {
 		http.Error(w, "instance id required", http.StatusBadRequest)
-		return
-	}
-	if r.Method != http.MethodDelete {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	terminateInstance(w, id)

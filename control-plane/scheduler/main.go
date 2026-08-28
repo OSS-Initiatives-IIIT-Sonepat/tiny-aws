@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -52,12 +51,16 @@ var (
 func main() {
 	registryURL := getenv("REGISTRY_URL", "http://127.0.0.1:9000")
 
-	http.HandleFunc("/health", handleHealth)
-	http.HandleFunc("/schedule", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("GET /health", handleHealth)
+	http.HandleFunc("GET /schedule", func(w http.ResponseWriter, r *http.Request) {
 		handleSchedule(w, r, registryURL)
 	})
-	http.HandleFunc("/jobs/", handleJobByID)
-	http.HandleFunc("/jobs", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("GET /jobs/{id}", handleJobByID)
+	http.HandleFunc("PATCH /jobs/{id}", handleJobByID)
+	http.HandleFunc("GET /jobs", func(w http.ResponseWriter, r *http.Request) {
+		handleJobs(w, r, registryURL)
+	})
+	http.HandleFunc("POST /jobs", func(w http.ResponseWriter, r *http.Request) {
 		handleJobs(w, r, registryURL)
 	})
 
@@ -66,11 +69,6 @@ func main() {
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"status":  "healthy",
@@ -79,11 +77,6 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleSchedule(w http.ResponseWriter, r *http.Request, registryURL string) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	node, err := pickHealthyComputeNode(registryURL)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
@@ -108,8 +101,8 @@ func handleJobs(w http.ResponseWriter, r *http.Request, registryURL string) {
 }
 
 func handleJobByID(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimPrefix(r.URL.Path, "/jobs/")
-	if id == "" || strings.Contains(id, "/") {
+	id := r.PathValue("id")
+	if id == "" {
 		http.Error(w, "job id required", http.StatusBadRequest)
 		return
 	}

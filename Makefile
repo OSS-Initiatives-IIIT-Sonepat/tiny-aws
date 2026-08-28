@@ -1,4 +1,4 @@
-.PHONY: registry agent storage scheduler
+.PHONY: registry agent storage scheduler smoke
 
 registry:
 	cd control-plane/registry && go run .
@@ -11,3 +11,6 @@ storage:
 
 scheduler:
 	cd control-plane/scheduler && go run .
+
+smoke:
+	powershell -ExecutionPolicy Bypass -File tests/integration/smoke-test.ps1

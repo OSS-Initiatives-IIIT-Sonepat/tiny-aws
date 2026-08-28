@@ -57,10 +57,37 @@ go run .
 ## Verify cluster
 
 ```powershell
+curl.exe http://127.0.0.1:9000/health
+curl.exe http://127.0.0.1:8080/health
+curl.exe http://127.0.0.1:9001/health
 curl.exe http://127.0.0.1:9000/nodes
 curl.exe http://127.0.0.1:9000/nodes?role=compute
 curl.exe http://127.0.0.1:9000/nodes?role=storage
 curl.exe http://127.0.0.1:9001/schedule
+```
+
+## Integration smoke test
+
+Start the full stack, then run:
+
+```powershell
+.\scripts\run-local.ps1
+# wait for all services to start, then:
+.\tests\integration\smoke-test.ps1
+```
+
+## Scheduler API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Scheduler health |
+| GET | `/schedule` | Pick a healthy compute node |
+| POST | `/jobs` | Submit a job (`{"command":"echo hello"}`) |
+| GET | `/jobs` | List submitted jobs |
+
+```powershell
+curl.exe -X POST http://127.0.0.1:9001/jobs -H "Content-Type: application/json" -d "{\"command\":\"echo hello\"}"
+curl.exe http://127.0.0.1:9001/jobs
 ```
 
 ## Test storage
@@ -77,6 +104,7 @@ curl.exe http://127.0.0.1:7001/objects
 | Variable | Default | Used by |
 |----------|---------|---------|
 | `REGISTRY_URL` | `http://127.0.0.1:9000` | ec2-agent, object-store, scheduler |
+| `SCHEDULER_URL` | `http://127.0.0.1:9001` | smoke test (optional) |
 | `OBJECT_STORE_ADDR` | `127.0.0.1:7001` | object-store |
 | `STORAGE_ROOT` | `data` | object-store |
 | `METADATA_DB` | `metadata.db` | object-store |

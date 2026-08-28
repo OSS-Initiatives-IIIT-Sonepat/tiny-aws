@@ -8,35 +8,39 @@ import (
 	"time"
 )
 
-// Node struct represents a node in the cluster.
 type Node struct {
-	ID        string    `json:"id"`
-	Hostname  string    `json:"hostname"`
-	CPUCount  int       `json:"cpu_count"`
-	Role	  string    `json:"role"`
-	Status    string    `json:"status"`
-	LastSeen  time.Time `json:"last_seen"`
+	ID       string    `json:"id"`
+	Hostname string    `json:"hostname"`
+	CPUCount int       `json:"cpu_count"`
+	Role     string    `json:"role"`
+	Status   string    `json:"status"`
+	LastSeen time.Time `json:"last_seen"`
 }
 
-// Heartbeat struct for incoming heartbeat requests
 type Heartbeat struct {
 	ID string `json:"id"`
 }
 
-// nodes map with mutex for thread-safe access
 var (
-	nodes   = make(map[string]Node)
+	store   *NodeStore
+	nodes   map[string]Node
 	nodesMu sync.RWMutex
 )
 
-func main () {
-	
-	// register end points
+func main() {
+	store = NewNodeStore("registry.db")
+
+	loaded, err := store.LoadAll()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	nodes = loaded
+
 	http.HandleFunc("/nodes", handleNodes)
 	http.HandleFunc("/nodes/register", handleRegister)
 	http.HandleFunc("/nodes/heartbeat", handleHeartbeat)
 
-	// start health check goroutine
 	go checkNodesHealth()
 
 	log.Println("node registry listening on :9000")
@@ -44,7 +48,6 @@ func main () {
 	if err := http.ListenAndServe(":9000", nil); err != nil {
 		log.Fatal(err)
 	}
-
 }
 
 func handleNodes(w http.ResponseWriter, r *http.Request) {
@@ -83,7 +86,6 @@ func handleNodes(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleRegister(w http.ResponseWriter, r *http.Request) {
-
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -102,43 +104,47 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	node.Status = "healthy"
 	node.LastSeen = time.Now()
 
-	// acquire write lock before modifying nodes map
 	nodesMu.Lock()
 	nodes[node.ID] = node
 	nodesMu.Unlock()
+
+	if err := store.Save(node); err != nil {
+		http.Error(w, "failed to persist node", http.StatusInternalServerError)
+		return
+	}
 
 	log.Printf("POST /nodes/register - node %s registered", node.ID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 
-	// encode the response body as JSON
 	if err := json.NewEncoder(w).Encode(node); err != nil {
 		http.Error(w, "failed to encode node", http.StatusInternalServerError)
 	}
-
 }
 
 func handleHeartbeat(w http.ResponseWriter, r *http.Request) {
-
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	var heartbeat Heartbeat
-	// decode the request body into a Heartbeat struct
 	if err := json.NewDecoder(r.Body).Decode(&heartbeat); err != nil {
 		http.Error(w, "failed to decode heartbeat", http.StatusBadRequest)
 		return
 	}
 
-	// acquire write lock before modifying nodes map
 	nodesMu.Lock()
-	if node, exists := nodes[heartbeat.ID]; exists {
+	node, exists := nodes[heartbeat.ID]
+	if exists {
 		node.LastSeen = time.Now()
 		node.Status = "healthy"
 		nodes[heartbeat.ID] = node
+
+		if err := store.Save(node); err != nil {
+			log.Printf("failed to persist node %s: %v", heartbeat.ID, err)
+		}
 
 		log.Printf("POST /nodes/heartbeat - node %s heartbeat received", heartbeat.ID)
 
@@ -147,17 +153,16 @@ func handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(node)
-	} else {
-		log.Printf("POST /nodes/heartbeat - node %s not found", heartbeat.ID)
-		nodesMu.Unlock()
-		http.Error(w, "node not found", http.StatusNotFound)
+		return
 	}
 
+	log.Printf("POST /nodes/heartbeat - node %s not found", heartbeat.ID)
+	nodesMu.Unlock()
+	http.Error(w, "node not found", http.StatusNotFound)
 }
 
 func checkNodesHealth() {
 	ticker := time.NewTicker(10 * time.Second)
-
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -172,6 +177,10 @@ func checkNodesHealth() {
 
 				node.Status = "unhealthy"
 				nodes[id] = node
+
+				if err := store.Save(node); err != nil {
+					log.Printf("failed to persist node %s: %v", id, err)
+				}
 			}
 		}
 		nodesMu.Unlock()

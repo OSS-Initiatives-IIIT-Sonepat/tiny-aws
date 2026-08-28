@@ -65,4 +65,6 @@ Cargo.lock
 
 # Storage runtime artifacts
 metadata.db
+registry.db
+control-plane/registry/registry.db
 data-plane/storage/engine/build/

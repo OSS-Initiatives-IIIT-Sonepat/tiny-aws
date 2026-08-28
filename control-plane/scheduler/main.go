@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,18 +24,29 @@ type JobRequest struct {
 }
 
 type Job struct {
-	ID        string    `json:"job_id"`
-	NodeID    string    `json:"node_id"`
-	Command   string    `json:"command"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         string     `json:"job_id"`
+	NodeID     string     `json:"node_id"`
+	Command    string     `json:"command"`
+	Status     string     `json:"status"`
+	ExitCode   *int       `json:"exit_code,omitempty"`
+	Stdout     string     `json:"stdout,omitempty"`
+	Stderr     string     `json:"stderr,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+}
+
+type JobUpdateRequest struct {
+	Status   string `json:"status"`
+	ExitCode *int   `json:"exit_code,omitempty"`
+	Stdout   string `json:"stdout,omitempty"`
+	Stderr   string `json:"stderr,omitempty"`
 }
 
 var (
-	counter  uint64
-	jobs     = make(map[string]Job)
-	jobsMu   sync.RWMutex
-	jobSeq   uint64
+	counter uint64
+	jobs    = make(map[string]Job)
+	jobsMu  sync.RWMutex
+	jobSeq  uint64
 )
 
 func main() {
@@ -44,6 +56,7 @@ func main() {
 	http.HandleFunc("/schedule", func(w http.ResponseWriter, r *http.Request) {
 		handleSchedule(w, r, registryURL)
 	})
+	http.HandleFunc("/jobs/", handleJobByID)
 	http.HandleFunc("/jobs", func(w http.ResponseWriter, r *http.Request) {
 		handleJobs(w, r, registryURL)
 	})
@@ -94,6 +107,23 @@ func handleJobs(w http.ResponseWriter, r *http.Request, registryURL string) {
 	}
 }
 
+func handleJobByID(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/jobs/")
+	if id == "" || strings.Contains(id, "/") {
+		http.Error(w, "job id required", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		getJob(w, id)
+	case http.MethodPatch:
+		updateJob(w, r, id)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
 func submitJob(w http.ResponseWriter, r *http.Request, registryURL string) {
 	var req JobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -133,16 +163,87 @@ func submitJob(w http.ResponseWriter, r *http.Request, registryURL string) {
 }
 
 func listJobs(w http.ResponseWriter, r *http.Request) {
+	nodeID := r.URL.Query().Get("node_id")
+	status := r.URL.Query().Get("status")
+
 	jobsMu.RLock()
 	defer jobsMu.RUnlock()
 
-	result := make([]Job, 0, len(jobs))
+	result := make([]Job, 0)
 	for _, job := range jobs {
+		if nodeID != "" && job.NodeID != nodeID {
+			continue
+		}
+		if status != "" && job.Status != status {
+			continue
+		}
 		result = append(result, job)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
+}
+
+func getJob(w http.ResponseWriter, id string) {
+	jobsMu.RLock()
+	job, ok := jobs[id]
+	jobsMu.RUnlock()
+
+	if !ok {
+		http.Error(w, "job not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(job)
+}
+
+func updateJob(w http.ResponseWriter, r *http.Request, id string) {
+	var req JobUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "failed to decode update", http.StatusBadRequest)
+		return
+	}
+
+	allowed := map[string]bool{
+		"running": true,
+		"done":    true,
+		"failed":  true,
+	}
+	if !allowed[req.Status] {
+		http.Error(w, "invalid status", http.StatusBadRequest)
+		return
+	}
+
+	jobsMu.Lock()
+	job, ok := jobs[id]
+	if !ok {
+		jobsMu.Unlock()
+		http.Error(w, "job not found", http.StatusNotFound)
+		return
+	}
+
+	job.Status = req.Status
+	if req.ExitCode != nil {
+		job.ExitCode = req.ExitCode
+	}
+	if req.Stdout != "" {
+		job.Stdout = req.Stdout
+	}
+	if req.Stderr != "" {
+		job.Stderr = req.Stderr
+	}
+	if req.Status == "done" || req.Status == "failed" {
+		now := time.Now().UTC()
+		job.FinishedAt = &now
+	}
+	jobs[job.ID] = job
+	jobsMu.Unlock()
+
+	log.Printf("PATCH /jobs/%s - status=%s", id, req.Status)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(job)
 }
 
 func pickHealthyComputeNode(registryURL string) (*Node, error) {

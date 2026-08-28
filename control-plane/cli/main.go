@@ -15,6 +15,9 @@ Usage:
   tinyaws object get <key>
   tinyaws job submit "<command>"
   tinyaws job status <job-id> [--wait]
+  tinyaws instance launch
+  tinyaws instance list
+  tinyaws instance terminate <id>
 
 Environment:
   REGISTRY_URL      default http://127.0.0.1:9000
@@ -36,6 +39,8 @@ func main() {
 		runObject(os.Args[2:])
 	case "job":
 		runJob(os.Args[2:])
+	case "instance":
+		runInstance(os.Args[2:])
 	default:
 		printUsage()
 		os.Exit(1)

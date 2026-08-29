@@ -17,6 +17,9 @@ std::filesystem::path BlockStore::path_for(const std::string& id) const {
 
 void BlockStore::put(const std::string& id, const std::vector<uint8_t>& data) {
     auto path = path_for(id);
+    if (path.has_parent_path()) {
+        std::filesystem::create_directories(path.parent_path());
+    }
     std::ofstream out(path, std::ios::binary);
     if (!out) throw std::runtime_error("failed to write block");
     out.write(reinterpret_cast<const char*>(data.data()), data.size());

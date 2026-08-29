@@ -1,3 +1,4 @@
+mod auth;
 mod block;
 mod config;
 mod ffi;
@@ -6,7 +7,7 @@ mod registry;
 mod server;
 mod store;
 
-use axum::{routing::get, routing::put, Router};
+use axum::{middleware, routing::get, routing::put, Router};
 use metadata::MetadataStore;
 use server::AppState;
 use std::sync::Arc;
@@ -49,6 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .get(server::get_bucket_object)
                 .delete(server::delete_bucket_object),
         )
+        .layer(middleware::from_fn(auth::require_auth))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&listen_addr).await?;

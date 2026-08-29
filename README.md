@@ -159,11 +159,11 @@ curl.exe http://127.0.0.1:7001/buckets
 | `OBJECT_STORE_ADDR` | `127.0.0.1:7001` | object-store |
 | `STORAGE_ROOT` | `data` | object-store |
 | `METADATA_DB` | `metadata.db` | object-store |
-| `TINYAWS_API_KEY` | (none) | registry, scheduler, cli (optional bearer auth) |
+| `TINYAWS_API_KEY` | (none) | registry, scheduler, object-store, cli (optional bearer auth) |
 
 ## API key auth (optional)
 
-Set the same key on registry, scheduler, and CLI to require `Authorization: Bearer <key>` on client APIs. Agents can still register, heartbeat, poll jobs, and patch job status without a key.
+Set the same key on registry, scheduler, object-store, and CLI to require `Authorization: Bearer <key>` on all APIs. Agents can still register, heartbeat, poll jobs, and patch job status without a key.
 
 ```powershell
 $env:TINYAWS_API_KEY = "dev-secret"

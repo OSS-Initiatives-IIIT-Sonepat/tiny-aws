@@ -8,7 +8,7 @@ import (
 	"os"
 )
 
-// parsd CLI flags for object commands
+// Parsed CLI flags for object commands.
 type objectArgs struct {
 	bucket string
 	key    string
@@ -78,52 +78,22 @@ func parseObjectArgs(args []string, needData bool) objectArgs {
 			}
 			parsed.data = b
 			i++
-		} 
+		}
 	}
 
 	if needData && len(parsed.data) == 0 {
 		fmt.Println("put requires --data or --file")
 		os.Exit(1)
 	}
+
 	return parsed
-}	
+}
 
-// PUT /objects/{key} with --data or --file body.
+// PUT object (flat or bucket-scoped).
 func runObjectPut(args []string) {
-	if len(args) < 1 {
-		fmt.Println("usage: tinyaws object put <key> [--data text] [--file path]")
-		os.Exit(1)
-	}
+	parsed := parseObjectArgs(args, true)
 
-	key := args[0]
-	data := []byte{}
-
-	for i := 1; i < len(args); i++ {
-		switch args[i] {
-		case "--data":
-			if i+1 >= len(args) {
-				fmt.Println("--data requires a value")
-				os.Exit(1)
-			}
-			data = []byte(args[i+1])
-			i++
-		case "--file":
-			if i+1 >= len(args) {
-				fmt.Println("--file requires a path")
-				os.Exit(1)
-			}
-			b, err := os.ReadFile(args[i+1])
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "read file: %v\n", err)
-				os.Exit(1)
-			}
-			data = b
-			i++
-		}
-	}
-
-	url := objectStoreURL() + "/objects/" + key
-	req, err := http.NewRequest(http.MethodPut, url, bytes.NewReader(data))
+	req, err := http.NewRequest(http.MethodPut, objectURL(parsed.bucket, parsed.key), bytes.NewReader(parsed.data))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -142,20 +112,18 @@ func runObjectPut(args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("uploaded object %q (%d bytes)\n", key, len(data))
+	if parsed.bucket != "" {
+		fmt.Printf("uploaded %q to bucket %q (%d bytes)\n", parsed.key, parsed.bucket, len(parsed.data))
+	} else {
+		fmt.Printf("uploaded object %q (%d bytes)\n", parsed.key, len(parsed.data))
+	}
 }
 
-// GET /objects/{key} and print to stdout.
+// GET object (flat or bucket-scoped).
 func runObjectGet(args []string) {
-	if len(args) < 1 {
-		fmt.Println("usage: tinyaws object get <key>")
-		os.Exit(1)
-	}
+	parsed := parseObjectArgs(args, false)
 
-	key := args[0]
-	url := objectStoreURL() + "/objects/" + key
-
-	resp, err := http.Get(url)
+	resp, err := http.Get(objectURL(parsed.bucket, parsed.key))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)

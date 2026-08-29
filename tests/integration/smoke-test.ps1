@@ -135,4 +135,22 @@ if ($boundFinal.status -ne "done") {
 Write-Host "  instance-bound job ok"
 
 Write-Host ""
+Write-Host "[10/10] Instance workspace"
+$wsBody = @{ command = "echo __WS__"; instance_id = $inst.id } | ConvertTo-Json
+$wsJob = Invoke-RestMethod -Uri "http://127.0.0.1:9001/jobs" -Method Post -ContentType "application/json" -Headers $authHeader -Body $wsBody
+if (-not $wsJob.job_id) { throw "workspace job missing job_id" }
+
+$wsFinal = $null
+for ($i = 0; $i -lt 15; $i++) {
+    Start-Sleep -Seconds 2
+    $wsFinal = Invoke-RestMethod -Uri "http://127.0.0.1:9001/jobs/$($wsJob.job_id)" -Headers $authHeader
+    if ($wsFinal.status -eq "done") { break }
+    if ($wsFinal.status -eq "failed") {
+        throw "workspace job failed: $($wsFinal | ConvertTo-Json -Compress)"
+    }
+}
+if ($wsFinal.status -ne "done") { throw "workspace job did not complete" }
+Write-Host "  workspace job ok"
+
+Write-Host ""
 Write-Host "ALL CHECKS PASSED"

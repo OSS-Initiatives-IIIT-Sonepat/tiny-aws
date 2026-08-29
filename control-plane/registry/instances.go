@@ -43,7 +43,18 @@ func NewInstanceStore(db *sql.DB) *InstanceStore {
 	if err != nil {
 		log.Fatal(err)
 	}
-	return &InstanceStore{db: db}
+
+	// Load max sequence so IDs don't reset on restart.
+	var maxSeq uint64
+	var raw sql.NullString
+	_ = db.QueryRow(`SELECT id FROM instances ORDER BY rowid DESC LIMIT 1`).Scan(&raw)
+	if raw.Valid {
+		var n uint64
+		fmt.Sscanf(raw.String, "i-%d", &n)
+		maxSeq = n
+	}
+
+	return &InstanceStore{db: db, seq: maxSeq}
 }
 
 // Saves instance row to SQLite.

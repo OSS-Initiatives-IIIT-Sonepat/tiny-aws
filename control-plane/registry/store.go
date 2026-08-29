@@ -27,6 +27,10 @@ func NewNodeStore(path string) *NodeStore {
 			status     TEXT NOT NULL,
 			last_seen  TEXT NOT NULL
 		);
+		CREATE TABLE IF NOT EXISTS api_keys (
+			key  TEXT PRIMARY KEY,
+			role TEXT NOT NULL
+		);
 	`)
 	if err != nil {
 		log.Fatal(err)

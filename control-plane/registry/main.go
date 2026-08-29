@@ -30,6 +30,7 @@ var (
 func main() {
 	store = NewNodeStore("registry.db")
 	instanceStore = NewInstanceStore(store.DB())
+	iamDB = store.DB()
 
 	loaded, err := store.LoadAll()
 	if err != nil {
@@ -53,6 +54,9 @@ func main() {
 	http.HandleFunc("POST /instances", authMiddleware(handleInstances))
 	http.HandleFunc("GET /instances/{id}", authMiddleware(handleInstanceGet))
 	http.HandleFunc("DELETE /instances/{id}", authMiddleware(handleInstanceByID))
+	http.HandleFunc("POST /iam/keys", authMiddleware(handleIAMKeyCreate))
+	http.HandleFunc("DELETE /iam/keys/{key}", authMiddleware(handleIAMKeyDelete))
+	http.HandleFunc("GET /iam/keys", authMiddleware(handleIAMKeyList))
 
 	go checkNodesHealth()
 

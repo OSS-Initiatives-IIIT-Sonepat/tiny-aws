@@ -1,14 +1,44 @@
 package main
 
 import (
+	"database/sql"
 	"net/http"
 	"os"
 )
 
-// Returns false and writes 401 when a key is configured but the request is unauthorized.
+// iamDB is the shared registry DB, wired in main after store is created.
+var iamDB *sql.DB
+
+// roleForKey looks up key in the api_keys table; falls back to the env var key (admin).
+// Returns "" if the key is not recognized.
+func roleForKey(key string) string {
+	envKey := os.Getenv("TINYAWS_API_KEY")
+	if envKey != "" && key == envKey {
+		return "admin"
+	}
+	if iamDB == nil {
+		return ""
+	}
+	var role string
+	err := iamDB.QueryRow(`SELECT role FROM api_keys WHERE key = ?`, key).Scan(&role)
+	if err != nil {
+		return ""
+	}
+	return role
+}
+
+// Returns false and writes 401/403 when a key is configured but the request is unauthorized.
+// admin: full access. readonly: GET only.
 func requireAuth(w http.ResponseWriter, r *http.Request) bool {
-	key := os.Getenv("TINYAWS_API_KEY")
-	if key == "" {
+	envKey := os.Getenv("TINYAWS_API_KEY")
+	// Auth is only enforced when env key is set OR api_keys table has rows.
+	hasIAM := envKey != ""
+	if !hasIAM && iamDB != nil {
+		var n int
+		iamDB.QueryRow(`SELECT COUNT(*) FROM api_keys`).Scan(&n)
+		hasIAM = n > 0
+	}
+	if !hasIAM {
 		return true
 	}
 
@@ -23,8 +53,18 @@ func requireAuth(w http.ResponseWriter, r *http.Request) bool {
 	}
 
 	auth := r.Header.Get("Authorization")
-	if auth != "Bearer "+key {
+	if len(auth) < 8 || auth[:7] != "Bearer " {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	role := roleForKey(auth[7:])
+	if role == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	// readonly keys may not mutate.
+	if role == "readonly" && r.Method != http.MethodGet {
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return false
 	}
 	return true

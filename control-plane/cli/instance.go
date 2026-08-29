@@ -8,10 +8,10 @@ import (
 	"os"
 )
 
-// Handles: tinyaws instance launch|list|terminate ...
+// Handles: tinyaws instance launch|list|terminate|info ...
 func runInstance(args []string) {
 	if len(args) < 1 {
-		fmt.Println("usage: tinyaws instance launch|list|terminate ...")
+		fmt.Println("usage: tinyaws instance launch|list|terminate|info ...")
 		os.Exit(1)
 	}
 
@@ -26,8 +26,14 @@ func runInstance(args []string) {
 			os.Exit(1)
 		}
 		runInstanceTerminate(args[1])
+	case "info":
+		if len(args) < 2 {
+			fmt.Println("usage: tinyaws instance info <id>")
+			os.Exit(1)
+		}
+		runInstanceInfo(args[1])
 	default:
-		fmt.Println("usage: tinyaws instance launch|list|terminate ...")
+		fmt.Println("usage: tinyaws instance launch|list|terminate|info ...")
 		os.Exit(1)
 	}
 }
@@ -102,4 +108,32 @@ func runInstanceTerminate(id string) {
 	}
 
 	fmt.Println("terminated", id)
+}
+
+// GET /instances/{id} — show instance node, status, and workspace path.
+func runInstanceInfo(id string) {
+	resp, err := httpGet(registryURL() + "/instances/" + id)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		fmt.Fprintf(os.Stderr, "info failed %d: %s\n", resp.StatusCode, string(body))
+		os.Exit(1)
+	}
+
+	var inst map[string]any
+	if err := json.Unmarshal(body, &inst); err != nil {
+		fmt.Fprintf(os.Stderr, "decode: %v\n", err)
+		os.Exit(1)
+	}
+
+	// workspace path mirrors what the agent creates: $TEMP/tinyaws/<id>
+	fmt.Printf("id:        %s\n", inst["id"])
+	fmt.Printf("node:      %s\n", inst["node_id"])
+	fmt.Printf("status:    %s\n", inst["status"])
+	fmt.Printf("workspace: %s/tinyaws/%s\n", os.TempDir(), inst["id"])
 }

@@ -58,12 +58,7 @@ func runDeploy(args []string) {
 	storeURL := objectStoreURL()
 	downloadURL := fmt.Sprintf("%s/buckets/deployments/objects/%s", storeURL, key)
 
-	cmd := fmt.Sprintf(
-		`powershell -NoProfile -Command "$d=Join-Path $env:TEMP 'tinyaws-deploy'; New-Item -ItemType Directory -Force -Path $d | Out-Null; Invoke-WebRequest -Uri '%s' -OutFile ($d+'\app.zip'); Expand-Archive -Force ($d+'\app.zip') $d; if (Test-Path ($d+'\start.ps1')) { & ($d+'\start.ps1') } else { Get-ChildItem $d }"`,
-		downloadURL,
-	)
-
-	jobID := submitJobCommand(cmd, instanceID)
+	jobID := submitDeployJob(downloadURL, instanceID)
 	fmt.Printf("deploy job %s started\n", jobID)
 
 	if wait {
@@ -164,6 +159,35 @@ func uploadObject(bucket, key string, data []byte) {
 
 func submitJobCommand(command, instanceID string) string {
 	payload := map[string]string{"command": command}
+	if instanceID != "" {
+		payload["instance_id"] = instanceID
+	}
+	b, _ := json.Marshal(payload)
+
+	resp, err := httpPost(schedulerURL()+"/jobs", "application/json", bytes.NewReader(b))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "submit failed: %v\n", err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		fmt.Fprintf(os.Stderr, "submit failed %d: %s\n", resp.StatusCode, string(body))
+		os.Exit(1)
+	}
+
+	var job jobRecord
+	if err := json.Unmarshal(body, &job); err != nil {
+		fmt.Fprintf(os.Stderr, "decode: %v\n", err)
+		os.Exit(1)
+	}
+	return job.ID
+}
+
+// submitDeployJob submits a deploy job with deploy_url; agent handles download/run.
+func submitDeployJob(deployURL, instanceID string) string {
+	payload := map[string]string{"deploy_url": deployURL, "command": ""}
 	if instanceID != "" {
 		payload["instance_id"] = instanceID
 	}

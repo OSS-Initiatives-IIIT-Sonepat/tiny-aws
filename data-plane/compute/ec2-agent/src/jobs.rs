@@ -7,6 +7,8 @@ use tokio::time::interval;
 struct Job {
     job_id: String,
     command: String,
+    #[serde(default)]
+    deploy_url: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,7 +71,12 @@ pub fn start_job_worker(node_id: String, scheduler_url: String, registry_url: St
                 continue;
             }
 
-            let (exit_code, stdout, stderr) = run_command(&job.command).await;
+            // Deploy jobs: download zip, extract, run start script.
+            let (exit_code, stdout, stderr) = if !job.deploy_url.is_empty() {
+                run_deploy(&client, &job.deploy_url).await
+            } else {
+                run_command(&job.command).await
+            };
             let status = if exit_code == 0 { "done" } else { "failed" };
 
             if let Err(e) = report_result(
@@ -89,6 +96,66 @@ pub fn start_job_worker(node_id: String, scheduler_url: String, registry_url: St
             }
         }
     });
+}
+
+// Downloads zip from deploy_url, extracts to temp dir, runs start.ps1 or start.sh.
+async fn run_deploy(client: &reqwest::Client, deploy_url: &str) -> (i32, String, String) {
+    // download zip to temp file
+    let bytes = match client.get(deploy_url).send().await {
+        Ok(resp) => match resp.bytes().await {
+            Ok(b) => b,
+            Err(e) => return (-1, String::new(), format!("download read error: {}", e)),
+        },
+        Err(e) => return (-1, String::new(), format!("download error: {}", e)),
+    };
+
+    let tmp_dir = std::env::temp_dir().join("tinyaws-deploy");
+    let zip_path = tmp_dir.join("app.zip");
+
+    if let Err(e) = std::fs::create_dir_all(&tmp_dir) {
+        return (-1, String::new(), format!("mkdir error: {}", e));
+    }
+    if let Err(e) = std::fs::write(&zip_path, &bytes) {
+        return (-1, String::new(), format!("write zip error: {}", e));
+    }
+
+    // extract using platform shell (no new dep)
+    // ponytail: shell-out extraction; add zip crate if cross-platform extraction without shell matters
+    let zip_str = zip_path.to_string_lossy();
+    let dir_str = tmp_dir.to_string_lossy();
+
+    #[cfg(windows)]
+    let extract_cmd = format!(
+        "powershell -NoProfile -Command \"Expand-Archive -Force '{}' '{}'\"",
+        zip_str, dir_str
+    );
+    #[cfg(not(windows))]
+    let extract_cmd = format!("unzip -o '{}' -d '{}'", zip_str, dir_str);
+
+    let (code, out, err) = run_command(&extract_cmd).await;
+    if code != 0 {
+        return (code, out, format!("extract failed: {}", err));
+    }
+
+    // detect and run start script
+    #[cfg(windows)]
+    let start_script = tmp_dir.join("start.ps1");
+    #[cfg(not(windows))]
+    let start_script = tmp_dir.join("start.sh");
+
+    if !start_script.exists() {
+        return (-1, String::new(), format!("no start script found in deploy archive"));
+    }
+
+    #[cfg(windows)]
+    let run_cmd = format!(
+        "powershell -NoProfile -File \"{}\"",
+        start_script.to_string_lossy()
+    );
+    #[cfg(not(windows))]
+    let run_cmd = format!("sh '{}'", start_script.to_string_lossy());
+
+    run_command(&run_cmd).await
 }
 
 // True if node has no instances or at least one running instance.

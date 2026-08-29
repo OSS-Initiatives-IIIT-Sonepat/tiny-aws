@@ -21,6 +21,7 @@ type Node struct {
 type JobRequest struct {
 	Command    string `json:"command"`
 	InstanceID string `json:"instance_id,omitempty"`
+	DeployURL  string `json:"deploy_url,omitempty"`
 }
 
 type Job struct {
@@ -28,6 +29,7 @@ type Job struct {
 	NodeID     string     `json:"node_id"`
 	InstanceID string     `json:"instance_id,omitempty"`
 	Command    string     `json:"command"`
+	DeployURL  string     `json:"deploy_url,omitempty"`
 	Status     string     `json:"status"`
 	RetryCount int        `json:"retry_count"`
 	ExitCode   *int       `json:"exit_code,omitempty"`
@@ -151,8 +153,8 @@ func submitJob(w http.ResponseWriter, r *http.Request, registryURL string) {
 		return
 	}
 
-	if req.Command == "" {
-		http.Error(w, "command is required", http.StatusBadRequest)
+	if req.Command == "" && req.DeployURL == "" {
+		http.Error(w, "command or deploy_url is required", http.StatusBadRequest)
 		return
 	}
 
@@ -175,6 +177,7 @@ func submitJob(w http.ResponseWriter, r *http.Request, registryURL string) {
 		NodeID:     node.ID,
 		InstanceID: req.InstanceID,
 		Command:    req.Command,
+		DeployURL:  req.DeployURL,
 		Status:     "pending",
 		CreatedAt:  time.Now().UTC(),
 	}
@@ -199,6 +202,22 @@ func listJobs(w http.ResponseWriter, r *http.Request) {
 
 	jobsMu.RLock()
 	defer jobsMu.RUnlock()
+
+	// Enforce per-node concurrency limit when agent polls for pending jobs.
+	if nodeID != "" && status == "pending" {
+		maxJobs := maxJobsPerNode()
+		running := 0
+		for _, job := range jobs {
+			if job.NodeID == nodeID && job.Status == "running" {
+				running++
+			}
+		}
+		if running >= maxJobs {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode([]Job{})
+			return
+		}
+	}
 
 	result := make([]Job, 0)
 	for _, job := range jobs {
@@ -388,6 +407,20 @@ func getenv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// maxJobsPerNode returns MAX_JOBS_PER_NODE env (default 1).
+func maxJobsPerNode() int {
+	v := os.Getenv("MAX_JOBS_PER_NODE")
+	if v == "" {
+		return 1
+	}
+	n := 1
+	fmt.Sscanf(v, "%d", &n)
+	if n < 1 {
+		n = 1
+	}
+	return n
 }
 
 // Marks running jobs as failed if they exceed jobTimeout.

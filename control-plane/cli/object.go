@@ -23,52 +23,6 @@ func objectURL(bucket, key string) string {
 	return objectStoreURL() + "/objects/" + key
 }
 
-// PUT object (flat or bucket-scoped).
-func runObjectPut(args []string) {
-	parsed := parseObjectArgs(args, true)
-	req, err := http.NewRequest(http.MethodPut, objectURL(parsed.bucket, parsed.key), bytes.NewReader(parsed.data))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		fmt.Fprintf(os.Stderr, "put failed %d: %s\n", resp.StatusCode, string(body))
-		os.Exit(1)
-	}
-	if parsed.bucket != "" {
-		fmt.Printf("uploaded %q to bucket %q (%d bytes)\n", parsed.key, parsed.bucket, len(parsed.data))
-	} else {
-		fmt.Printf("uploaded object %q (%d bytes)\n", parsed.key, len(parsed.data))
-	}
-}
-// GET object (flat or bucket-scoped).
-func runObjectGet(args []string) {
-	parsed := parseObjectArgs(args, false)
-	resp, err := http.Get(objectURL(parsed.bucket, parsed.key))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-	if resp.StatusCode >= 400 {
-		fmt.Fprintf(os.Stderr, "get failed %d: %s\n", resp.StatusCode, string(body))
-		os.Exit(1)
-	}
-	os.Stdout.Write(body)
-}
-
 // Handles: tinyaws object put/get ...
 func runObject(args []string) {
 	if len(args) < 1 {

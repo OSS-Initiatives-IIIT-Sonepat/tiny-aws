@@ -26,10 +26,14 @@ Usage:
 
   tinyaws deploy <dir> [--instance i-1] [--wait]
 
+  tinyaws auth set-key <key> [--role admin|readonly]
+  tinyaws auth whoami
+
 Environment:
   REGISTRY_URL      default http://127.0.0.1:9000
   SCHEDULER_URL     default http://127.0.0.1:9001
-  OBJECT_STORE_URL  default http://127.0.0.1:7001`)
+  OBJECT_STORE_URL  default http://127.0.0.1:7001
+  TINYAWS_API_KEY   optional bearer token`)
 }
 
 // Entry point — parses subcommands and delegates.
@@ -52,6 +56,8 @@ func main() {
 		runBucket(os.Args[2:])
 	case "deploy":
 		runDeploy(os.Args[2:])
+	case "auth":
+		runAuth(os.Args[2:])
 	default:
 		printUsage()
 		os.Exit(1)

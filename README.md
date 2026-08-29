@@ -154,3 +154,4 @@ curl.exe http://127.0.0.1:7001/buckets
 ```powershell
 $j = Invoke-RestMethod -Uri "http://127.0.0.1:9001/jobs" -Method Post -ContentType "application/json" -Body '{"command":"echo hello"}'
 Invoke-RestMethod "http://127.0.0.1:9001/jobs/$($j.job_id)"
+```

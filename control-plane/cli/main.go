@@ -19,6 +19,11 @@ Usage:
   tinyaws instance list
   tinyaws instance terminate <id>
 
+  tinyaws bucket create <name>
+  tinyaws bucket list
+  tinyaws object put <key> --bucket <name> [--data text] [--file path]
+  tinyaws object get <key> --bucket <name>
+
 Environment:
   REGISTRY_URL      default http://127.0.0.1:9000
   SCHEDULER_URL     default http://127.0.0.1:9001
@@ -41,6 +46,8 @@ func main() {
 		runJob(os.Args[2:])
 	case "instance":
 		runInstance(os.Args[2:])
+	case "bucket":
+		runBucket(os.Args[2:])
 	default:
 		printUsage()
 		os.Exit(1)

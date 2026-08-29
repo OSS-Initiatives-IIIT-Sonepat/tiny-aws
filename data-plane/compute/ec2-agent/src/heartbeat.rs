@@ -13,7 +13,8 @@ impl Heartbeat {
     }
 }
 
-pub async fn start_heartbeat(node_id: String, registry_url: &str) {
+// Spawns a background task that sends heartbeats every 10 seconds.
+pub fn start_heartbeat(node_id: String, registry_url: &str) {
     let client = reqwest::Client::new();
     let heartbeat = Heartbeat::new(node_id);
     let registry_url = registry_url.to_string();

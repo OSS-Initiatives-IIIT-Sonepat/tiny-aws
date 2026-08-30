@@ -24,10 +24,14 @@ Usage:
   tinyaws object put <key> --bucket <name> [--data text] [--file path]
   tinyaws object get <key> --bucket <name>
 
-  tinyaws deploy <dir> [--instance i-1] [--wait]
+  tinyaws deploy <dir> [--instance i-1] [--wait] [--service] [--port N]
 
   tinyaws auth set-key <key> [--role admin|readonly]
   tinyaws auth whoami
+
+  tinyaws service list
+  tinyaws service stop <id>
+  tinyaws service logs <id>
 
 Environment:
   REGISTRY_URL      default http://127.0.0.1:9000
@@ -72,6 +76,8 @@ func main() {
 		runSG(os.Args[2:])
 	case "lambda":
 		runLambda(os.Args[2:])
+	case "service":
+		runService(os.Args[2:])
 	default:
 		printUsage()
 		os.Exit(1)

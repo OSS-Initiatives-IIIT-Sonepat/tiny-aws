@@ -13,16 +13,18 @@ import (
 	"time"
 )
 
-// Handles: tinyaws deploy <dir> [--instance i-1] [--wait]
+// Handles: tinyaws deploy <dir> [--instance i-1] [--wait] [--service] [--port N]
 func runDeploy(args []string) {
 	if len(args) < 1 {
-		fmt.Println("usage: tinyaws deploy <dir> [--instance i-1] [--wait]")
+		fmt.Println("usage: tinyaws deploy <dir> [--instance i-1] [--wait] [--service] [--port N]")
 		os.Exit(1)
 	}
 
 	srcDir := args[0]
 	instanceID := ""
 	wait := false
+	isService := false
+	port := 0
 
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
@@ -35,6 +37,15 @@ func runDeploy(args []string) {
 			i++
 		case "--wait":
 			wait = true
+		case "--service":
+			isService = true
+		case "--port":
+			if i+1 >= len(args) {
+				fmt.Println("--port requires a value")
+				os.Exit(1)
+			}
+			fmt.Sscanf(args[i+1], "%d", &port)
+			i++
 		}
 	}
 
@@ -58,8 +69,12 @@ func runDeploy(args []string) {
 	storeURL := objectStoreURL()
 	downloadURL := fmt.Sprintf("%s/buckets/deployments/objects/%s", storeURL, key)
 
-	jobID := submitDeployJob(downloadURL, instanceID)
-	fmt.Printf("deploy job %s started\n", jobID)
+	jobID := submitDeployJob(downloadURL, instanceID, isService, port)
+	if isService {
+		fmt.Printf("service deploy job %s started (port %d)\n", jobID, port)
+	} else {
+		fmt.Printf("deploy job %s started\n", jobID)
+	}
 
 	if wait {
 		for {
@@ -186,10 +201,14 @@ func submitJobCommand(command, instanceID string) string {
 }
 
 // submitDeployJob submits a deploy job with deploy_url; agent handles download/run.
-func submitDeployJob(deployURL, instanceID string) string {
-	payload := map[string]string{"deploy_url": deployURL, "command": ""}
+func submitDeployJob(deployURL, instanceID string, isService bool, port int) string {
+	payload := map[string]any{"deploy_url": deployURL, "command": ""}
 	if instanceID != "" {
 		payload["instance_id"] = instanceID
+	}
+	if isService {
+		payload["job_type"] = "service"
+		payload["port"] = port
 	}
 	b, _ := json.Marshal(payload)
 

@@ -70,6 +70,8 @@ func main() {
 		runSubnet(os.Args[2:])
 	case "sg":
 		runSG(os.Args[2:])
+	case "lambda":
+		runLambda(os.Args[2:])
 	default:
 		printUsage()
 		os.Exit(1)

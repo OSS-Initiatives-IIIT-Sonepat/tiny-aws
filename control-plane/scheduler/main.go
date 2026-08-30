@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -79,6 +80,11 @@ func main() {
 	jobSeq = maxSeq
 
 	go watchJobTimeouts()
+
+	// D4: poll SQS queue for job submissions when SQS_URL is set
+	if sqsURL := os.Getenv("SQS_URL"); sqsURL != "" {
+		go pollSQSQueue(sqsURL, registryURL)
+	}
 
 	http.HandleFunc("GET /health", handleHealth)
 	http.HandleFunc("GET /schedule", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
@@ -315,6 +321,13 @@ func updateJob(w http.ResponseWriter, r *http.Request, id string) {
 
 	log.Printf("PATCH /jobs/%s - status=%s", id, req.Status)
 
+	// D6: notify SNS on job done/failed
+	if req.Status == "done" || req.Status == "failed" {
+		if snsURL := os.Getenv("SNS_URL"); snsURL != "" {
+			go snsPublish(snsURL, "job-status", fmt.Sprintf(`{"job_id":"%s","status":"%s"}`, id, req.Status))
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(job)
 }
@@ -456,4 +469,79 @@ func watchJobTimeouts() {
 		}
 		jobsMu.Unlock()
 	}
+}
+
+// D4: polls SQS queue "jobs" every 5s and submits any messages as scheduler jobs.
+func pollSQSQueue(sqsURL, registryURL string) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		resp, err := http.Get(sqsURL + "/queues/jobs/messages")
+		if err != nil {
+			log.Printf("sqs poll error: %v", err)
+			continue
+		}
+
+		var msg struct {
+			ID   string `json:"id"`
+			Body string `json:"body"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&msg); err != nil || msg.ID == "" {
+			resp.Body.Close()
+			continue
+		}
+		resp.Body.Close()
+
+		var req JobRequest
+		if err := json.Unmarshal([]byte(msg.Body), &req); err != nil || (req.Command == "" && req.DeployURL == "") {
+			log.Printf("sqs: bad message body: %s", msg.Body)
+		} else {
+			var node *Node
+			var nodeErr error
+			if req.InstanceID != "" {
+				node, nodeErr = pickNodeForInstance(registryURL, req.InstanceID)
+			} else {
+				node, nodeErr = pickHealthyComputeNode(registryURL)
+			}
+			if nodeErr != nil {
+				log.Printf("sqs: no node for message %s: %v", msg.ID, nodeErr)
+				continue
+			}
+			seq := atomic.AddUint64(&jobSeq, 1)
+			job := Job{
+				ID:        fmt.Sprintf("job-%d", seq),
+				NodeID:    node.ID,
+				InstanceID: req.InstanceID,
+				Command:   req.Command,
+				DeployURL: req.DeployURL,
+				Status:    "pending",
+				CreatedAt: time.Now().UTC(),
+			}
+			jobsMu.Lock()
+			jobs[job.ID] = job
+			jobStore.Save(job)
+			jobsMu.Unlock()
+			log.Printf("sqs: queued job %s from message %s", job.ID, msg.ID)
+		}
+
+		// ack the message
+		delReq, _ := http.NewRequest(http.MethodDelete, fmt.Sprintf("%s/queues/jobs/messages/%s", sqsURL, msg.ID), nil)
+		http.DefaultClient.Do(delReq)
+	}
+}
+
+// snsPublish fires a publish to an SNS topic; best-effort, logs errors.
+func snsPublish(snsURL, topic, message string) {
+	payload := fmt.Sprintf(`{"message":%q}`, message)
+	resp, err := http.Post(
+		fmt.Sprintf("%s/topics/%s/publish", snsURL, topic),
+		"application/json",
+		bytes.NewBufferString(payload),
+	)
+	if err != nil {
+		log.Printf("sns publish error: %v", err)
+		return
+	}
+	resp.Body.Close()
 }

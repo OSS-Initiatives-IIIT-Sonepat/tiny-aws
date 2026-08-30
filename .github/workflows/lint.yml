@@ -63,19 +63,20 @@ jobs:
         working-directory: data-plane/networking/load-balancer
 
       # golangci-lint on modules that matter most
+      # v2.x required: our go.mod uses go 1.26 which v1.x can't handle
       - uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          version: v2.1.6
           working-directory: control-plane/registry
 
       - uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          version: v2.1.6
           working-directory: control-plane/scheduler
 
       - uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          version: v2.1.6
           working-directory: control-plane/cli
 
   lint-rust:

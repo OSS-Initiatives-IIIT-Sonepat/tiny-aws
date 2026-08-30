@@ -1,5 +1,8 @@
 version: "2"
 
+run:
+  go: "1.21"   # language version for lint checks; matches CI Go setup
+
 linters:
   default: none
   enable:

@@ -256,9 +256,7 @@ async fn run_service(
 
     // J4: track svc_id -> pid so kill-poller can send SIGTERM
     if let Some(ref id) = svc_id {
-        if let Ok(mut map) = service_pids.lock() {
-            map.insert(id.clone(), child.id());
-        }
+        let _ = service_pids.lock().map(|mut m| m.insert(id.clone(), child.id()));
     }
 
     // J5: background log upload to object store
@@ -286,9 +284,7 @@ async fn run_service(
 
     // remove from kill-poller map — already exited
     if let Some(ref id) = svc_id {
-        if let Ok(mut map) = service_pids.lock() {
-            map.remove(id);
-        }
+        let _ = service_pids.lock().map(|mut m| m.remove(id));
     }
 
     // update registry service record
@@ -532,7 +528,8 @@ async fn report_result(
 
 // B3: runs command in the given working directory (or current dir if None).
 // B4: on Unix spawns in a new process group for isolation.
-// nspawn_prefix: when Some, prepends systemd-nspawn args to run inside a container.
+// nspawn_prefix: when Some, prepends systemd-nspawn args to run inside a container (Linux only).
+#[allow(unused_variables)]
 async fn run_command_in(command: &str, workdir: Option<&Path>, nspawn_prefix: Option<&[String]>) -> (i32, String, String) {
     #[cfg(windows)]
     let mut cmd = {
@@ -559,9 +556,9 @@ async fn run_command_in(command: &str, workdir: Option<&Path>, nspawn_prefix: Op
 
     // B4: Unix — new process group so kill(-pgid) cleans up children
     #[cfg(unix)]
-    {
+    unsafe {
         use std::os::unix::process::CommandExt;
-        unsafe { cmd.pre_exec(|| { libc::setpgid(0, 0); Ok(()) }); }
+        cmd.pre_exec(|| { libc::setpgid(0, 0); Ok(()) });
     }
 
     match cmd.output().await {

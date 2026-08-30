@@ -6,9 +6,10 @@ pub struct InstanceSpec {
     pub id: String,
     pub cpu_limit: String,
     pub mem_limit_mb: u64,
-    pub instance_type: String,
+    #[allow(dead_code)]
+    pub instance_type: String,   // stored for logging; not used in provision logic
     #[serde(default)]
-    pub base_image: String, // path to rootfs base; empty = use TINYAWS_ROOTFS_BASE default
+    pub base_image: String,
 }
 
 // rootfs_base returns the base rootfs path all instances clone from.

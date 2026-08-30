@@ -306,7 +306,9 @@ func provisionOnAgent(node Node, inst Instance) {
 	if err != nil {
 		log.Printf("provision agent call failed for %s: %v", inst.ID, err)
 		// mark failed so user knows
-		instanceStore.SetStatus(inst.ID, "failed")
+		if err2 := instanceStore.SetStatus(inst.ID, "failed"); err2 != nil {
+			log.Printf("failed to set instance %s status: %v", inst.ID, err2)
+		}
 		instancesMu.Lock()
 		for i, v := range instances {
 			if v.ID == inst.ID {

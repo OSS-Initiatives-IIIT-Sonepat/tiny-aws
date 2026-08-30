@@ -57,18 +57,42 @@ go run .
 
 ## CLI
 
+Install (optional):
+
+```powershell
+cd control-plane/cli
+go install .
+# binary lands in your GOPATH/bin as tinyaws.exe
+```
+
+Or run without installing:
+
 ```powershell
 cd control-plane/cli
 go run . node list
 go run . node list --role compute
+go run . node list --healthy-only
 go run . object put my-key --data "hello"
 go run . object get my-key
 go run . job submit "echo hello"
+go run . job submit "echo bound" --instance i-1
 go run . job status job-1 --wait
 go run . instance launch
 go run . instance list
 go run . instance terminate i-1
+go run . bucket create my-bucket
+go run . bucket list
+go run . object put file.txt --bucket my-bucket --data "hi"
+go run . deploy ./my-app --instance i-1 --wait
 ```
+
+### Deploy workflow
+
+1. Create an app folder with a `start.ps1` (Windows) or `start.sh` (Linux).
+2. Launch an instance: `tinyaws instance launch`
+3. Deploy: `tinyaws deploy ./my-app --instance i-1 --wait`
+
+The CLI zips your folder, uploads it to the `deployments` bucket, and submits a job on the instance node to download and run `start.ps1`.
 
 ## Verify cluster
 
@@ -98,7 +122,7 @@ Start the full stack, then run:
 |--------|------|-------------|
 | GET | `/health` | Scheduler health |
 | GET | `/schedule` | Pick a healthy compute node |
-| POST | `/jobs` | Submit a job (`{"command":"echo hello"}`) |
+| POST | `/jobs` | Submit a job (`{"command":"echo hello","instance_id":"i-1"}` optional) |
 | GET | `/jobs` | List submitted jobs |
 
 ```powershell
@@ -130,6 +154,7 @@ curl.exe http://127.0.0.1:7001/buckets
 |----------|---------|---------|
 | `REGISTRY_URL` | `http://127.0.0.1:9000` | ec2-agent, object-store, scheduler, cli |
 | `SCHEDULER_URL` | `http://127.0.0.1:9001` | ec2-agent, cli |
+| `SCHEDULER_DB` | `scheduler.db` | scheduler |
 | `OBJECT_STORE_URL` | `http://127.0.0.1:7001` | cli |
 | `OBJECT_STORE_ADDR` | `127.0.0.1:7001` | object-store |
 | `STORAGE_ROOT` | `data` | object-store |
@@ -137,8 +162,8 @@ curl.exe http://127.0.0.1:7001/buckets
 
 ## Job lifecycle
 
-1. Client submits: `POST /jobs` with `{"command":"echo hello"}`
-2. Scheduler assigns to a healthy compute node (`status: pending`)
+1. Client submits: `POST /jobs` with `{"command":"echo hello"}` or include `"instance_id":"i-1"`
+2. Scheduler assigns to a healthy compute node (or the instance node if `instance_id` is set)
 3. EC2 agent polls: `GET /jobs?node_id=<id>&status=pending`
 4. Agent marks running: `PATCH /jobs/{id}` with `{"status":"running"}`
 5. Agent runs command locally, reports: `PATCH /jobs/{id}` with `status`, `exit_code`, `stdout`, `stderr`
@@ -149,7 +174,17 @@ curl.exe http://127.0.0.1:7001/buckets
 | `pending` | Assigned, waiting for agent |
 | `running` | Agent is executing |
 | `done` | Finished (exit code 0) |
-| `failed` | Command failed |
+| `failed` | Command failed or timed out (60s) |
+
+## Instance lifecycle
+
+Launching an instance records which compute node runs it. Jobs submitted with `--instance i-1` go to that node only. When all instances on a node are terminated, the agent on that node stops accepting new jobs.
+
+```powershell
+$inst = Invoke-RestMethod -Uri "http://127.0.0.1:9000/instances" -Method Post
+$body = @{ command = "echo hello"; instance_id = $inst.id } | ConvertTo-Json
+Invoke-RestMethod -Uri "http://127.0.0.1:9001/jobs" -Method Post -ContentType "application/json" -Body $body
+```
 
 ```powershell
 $j = Invoke-RestMethod -Uri "http://127.0.0.1:9001/jobs" -Method Post -ContentType "application/json" -Body '{"command":"echo hello"}'

@@ -18,6 +18,10 @@ pub struct AppState {
     pub replication: ReplicationPolicy,
 }
 
+// GET /health — liveness check.
+pub async fn health() -> Json<serde_json::Value> {
+    Json(serde_json::json!({"status": "healthy", "service": "object-store"}))
+}
 // Writes bytes to engine + metadata for a given object id.
 fn write_object(
     state: &AppState,

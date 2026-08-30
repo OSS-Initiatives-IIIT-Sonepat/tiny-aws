@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         replication: repl,
     };
 
-    let app = Router::new()
+    let authed = Router::new()
         .route("/objects", get(server::list_objects))
         .route(
             "/objects/{id}",
@@ -59,6 +59,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .layer(middleware::from_fn(auth::require_auth))
         .with_state(state);
+
+    let app = Router::new()
+        .route("/health", get(server::health))
+        .merge(authed);
 
     let listener = tokio::net::TcpListener::bind(&listen_addr).await?;
 

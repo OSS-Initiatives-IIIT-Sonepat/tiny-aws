@@ -10,7 +10,7 @@ func printUsage() {
 	fmt.Println(`tiny-aws CLI
 
 Usage:
-  tinyaws node list [--role compute|storage]
+  tinyaws node list [--role compute|storage] [--healthy-only]
   tinyaws object put <key> [--data text] [--file path]
   tinyaws object get <key>
   tinyaws job submit "<command>" [--instance i-1]
@@ -23,6 +23,8 @@ Usage:
   tinyaws bucket list
   tinyaws object put <key> --bucket <name> [--data text] [--file path]
   tinyaws object get <key> --bucket <name>
+
+  tinyaws deploy <dir> [--instance i-1] [--wait]
 
 Environment:
   REGISTRY_URL      default http://127.0.0.1:9000
@@ -48,6 +50,8 @@ func main() {
 		runInstance(os.Args[2:])
 	case "bucket":
 		runBucket(os.Args[2:])
+	case "deploy":
+		runDeploy(os.Args[2:])
 	default:
 		printUsage()
 		os.Exit(1)

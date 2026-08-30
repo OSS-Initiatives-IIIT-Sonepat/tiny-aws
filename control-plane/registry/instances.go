@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -197,6 +199,11 @@ func launchInstance(w http.ResponseWriter) {
 
 	log.Printf("POST /instances - launched %s on node %s", inst.ID, inst.NodeID)
 
+	// D6: notify SNS on instance launch
+	if snsURL := os.Getenv("SNS_URL"); snsURL != "" {
+		go snsPublish(snsURL, "instance-launch", fmt.Sprintf(`{"instance_id":"%s","node_id":"%s"}`, inst.ID, inst.NodeID))
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(inst)
@@ -237,4 +244,19 @@ func pickHealthyComputeNodeLocal() (*Node, error) {
 		return nil, fmt.Errorf("no healthy compute nodes")
 	}
 	return &healthy[0], nil
+}
+
+// snsPublish fires a best-effort publish to an SNS topic.
+func snsPublish(snsURL, topic, message string) {
+	payload := fmt.Sprintf(`{"message":%q}`, message)
+	resp, err := http.Post(
+		fmt.Sprintf("%s/topics/%s/publish", snsURL, topic),
+		"application/json",
+		bytes.NewBufferString(payload),
+	)
+	if err != nil {
+		log.Printf("sns publish error: %v", err)
+		return
+	}
+	resp.Body.Close()
 }

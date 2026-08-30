@@ -1,0 +1,125 @@
+syntax = "proto3";
+
+package tinyaws.v1;
+
+option go_package = "github.com/OSS-Initiatives-IIIT-Sonepat/tiny-aws/proto/tinyaws";
+
+// NodeService — registry operations
+service NodeService {
+  rpc Register(RegisterRequest) returns (Node);
+  rpc Heartbeat(HeartbeatRequest) returns (Node);
+  rpc ListNodes(ListNodesRequest) returns (NodeList);
+}
+
+message Node {
+  string id = 1;
+  string hostname = 2;
+  int32 cpu_count = 3;
+  string role = 4;
+  string status = 5;
+}
+
+message RegisterRequest {
+  string id = 1;
+  string hostname = 2;
+  int32 cpu_count = 3;
+  string role = 4;
+}
+
+message HeartbeatRequest {
+  string id = 1;
+}
+
+message ListNodesRequest {
+  string role = 1;
+}
+
+message NodeList {
+  repeated Node nodes = 1;
+}
+
+// JobService — scheduler operations
+service JobService {
+  rpc Submit(JobRequest) returns (Job);
+  rpc Get(JobGetRequest) returns (Job);
+  rpc Update(JobUpdateRequest) returns (Job);
+  rpc List(JobListRequest) returns (JobList);
+}
+
+message Job {
+  string job_id = 1;
+  string node_id = 2;
+  string instance_id = 3;
+  string command = 4;
+  string deploy_url = 5;
+  string status = 6;
+  int32 exit_code = 7;
+  string stdout = 8;
+  string stderr = 9;
+}
+
+message JobRequest {
+  string command = 1;
+  string instance_id = 2;
+  string deploy_url = 3;
+}
+
+message JobGetRequest {
+  string job_id = 1;
+}
+
+message JobUpdateRequest {
+  string job_id = 1;
+  string status = 2;
+  int32 exit_code = 3;
+  string stdout = 4;
+  string stderr = 5;
+}
+
+message JobListRequest {
+  string node_id = 1;
+  string status = 2;
+}
+
+message JobList {
+  repeated Job jobs = 1;
+}
+
+// ObjectService — object-store operations
+service ObjectService {
+  rpc Put(PutObjectRequest) returns (PutObjectResponse);
+  rpc Get(GetObjectRequest) returns (GetObjectResponse);
+  rpc Delete(DeleteObjectRequest) returns (DeleteObjectResponse);
+  rpc List(ListObjectsRequest) returns (ListObjectsResponse);
+}
+
+message PutObjectRequest {
+  string key = 1;
+  bytes data = 2;
+  string content_type = 3;
+}
+
+message PutObjectResponse {
+  string etag = 1;
+}
+
+message GetObjectRequest {
+  string key = 1;
+}
+
+message GetObjectResponse {
+  bytes data = 1;
+  string content_type = 2;
+}
+
+message DeleteObjectRequest {
+  string key = 1;
+}
+
+message DeleteObjectResponse {}
+
+message ListObjectsRequest {}
+
+message ListObjectsResponse {
+  repeated string keys = 1;
+}

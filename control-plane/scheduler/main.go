@@ -23,6 +23,8 @@ type JobRequest struct {
 	Command    string `json:"command"`
 	InstanceID string `json:"instance_id,omitempty"`
 	DeployURL  string `json:"deploy_url,omitempty"`
+	JobType    string `json:"job_type,omitempty"` // "run" (default) | "service"
+	Port       int    `json:"port,omitempty"`     // port the service listens on
 }
 
 type Job struct {
@@ -31,6 +33,8 @@ type Job struct {
 	InstanceID string     `json:"instance_id,omitempty"`
 	Command    string     `json:"command"`
 	DeployURL  string     `json:"deploy_url,omitempty"`
+	JobType    string     `json:"job_type,omitempty"`
+	Port       int        `json:"port,omitempty"`
 	Status     string     `json:"status"`
 	RetryCount int        `json:"retry_count"`
 	ExitCode   *int       `json:"exit_code,omitempty"`
@@ -199,6 +203,8 @@ func submitJob(w http.ResponseWriter, r *http.Request, registryURL string) {
 		InstanceID: req.InstanceID,
 		Command:    req.Command,
 		DeployURL:  req.DeployURL,
+		JobType:    req.JobType,
+		Port:       req.Port,
 		Status:     "pending",
 		CreatedAt:  time.Now().UTC(),
 	}

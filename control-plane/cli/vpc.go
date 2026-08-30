@@ -35,7 +35,11 @@ func runVPC(args []string) {
 		body, _ := io.ReadAll(resp.Body)
 		fmt.Println(string(body))
 	case "list":
-		resp, _ := httpGet(networkingURL() + "/vpcs")
+		resp, err := httpGet(networkingURL() + "/vpcs")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
 		var list []map[string]any
@@ -77,7 +81,11 @@ func runSubnet(args []string) {
 				url += "?vpc_id=" + args[i+1]
 			}
 		}
-		resp, _ := httpGet(url)
+		resp, err := httpGet(url)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
 		var list []map[string]any
@@ -110,7 +118,11 @@ func runSG(args []string) {
 		body, _ := io.ReadAll(resp.Body)
 		fmt.Println(string(body))
 	case "list":
-		resp, _ := httpGet(networkingURL() + "/security-groups")
+		resp, err := httpGet(networkingURL() + "/security-groups")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
 		var list []map[string]any

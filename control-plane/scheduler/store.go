@@ -33,7 +33,8 @@ func NewJobStore(path string) *JobStore {
 			stdout      TEXT NOT NULL DEFAULT '',
 			stderr      TEXT NOT NULL DEFAULT '',
 			created_at  TEXT NOT NULL,
-			finished_at TEXT
+			finished_at TEXT,
+			retry_count INTEGER NOT NULL DEFAULT 0
 		);
 	`)
 	if err != nil {
@@ -41,6 +42,7 @@ func NewJobStore(path string) *JobStore {
 	}
 
 	_, _ = db.Exec(`ALTER TABLE jobs ADD COLUMN instance_id TEXT NOT NULL DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE jobs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`)
 
 	return &JobStore{db: db}
 }
@@ -58,13 +60,14 @@ func (s *JobStore) Save(job Job) error {
 	}
 
 	_, err := s.db.Exec(
-		`INSERT INTO jobs (id, node_id, instance_id, command, status, exit_code, stdout, stderr, created_at, finished_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO jobs (id, node_id, instance_id, command, status, retry_count, exit_code, stdout, stderr, created_at, finished_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   node_id = excluded.node_id,
 		   instance_id = excluded.instance_id,
 		   command = excluded.command,
 		   status = excluded.status,
+		   retry_count = excluded.retry_count,
 		   exit_code = excluded.exit_code,
 		   stdout = excluded.stdout,
 		   stderr = excluded.stderr,
@@ -75,6 +78,7 @@ func (s *JobStore) Save(job Job) error {
 		job.InstanceID,
 		job.Command,
 		job.Status,
+		job.RetryCount,
 		exitCode,
 		job.Stdout,
 		job.Stderr,
@@ -87,7 +91,7 @@ func (s *JobStore) Save(job Job) error {
 // Loads all jobs from DB and returns the highest job-N sequence number.
 func (s *JobStore) LoadAll() (map[string]Job, uint64, error) {
 	rows, err := s.db.Query(`
-		SELECT id, node_id, instance_id, command, status, exit_code, stdout, stderr, created_at, finished_at
+		SELECT id, node_id, instance_id, command, status, retry_count, exit_code, stdout, stderr, created_at, finished_at
 		FROM jobs`)
 	if err != nil {
 		return nil, 0, err
@@ -109,6 +113,7 @@ func (s *JobStore) LoadAll() (map[string]Job, uint64, error) {
 			&job.InstanceID,
 			&job.Command,
 			&job.Status,
+			&job.RetryCount,
 			&exitCode,
 			&job.Stdout,
 			&job.Stderr,

@@ -29,6 +29,7 @@ type Job struct {
 	InstanceID string     `json:"instance_id,omitempty"`
 	Command    string     `json:"command"`
 	Status     string     `json:"status"`
+	RetryCount int        `json:"retry_count"`
 	ExitCode   *int       `json:"exit_code,omitempty"`
 	Stdout     string     `json:"stdout,omitempty"`
 	Stderr     string     `json:"stderr,omitempty"`
@@ -57,7 +58,10 @@ var (
 	jobStore *JobStore
 )
 
-const jobTimeout = 60 * time.Second
+const (
+	jobTimeout   = 60 * time.Second
+	maxJobRetries = 1
+)
 
 func main() {
 	registryURL := getenv("REGISTRY_URL", "http://127.0.0.1:9000")
@@ -247,6 +251,26 @@ func updateJob(w http.ResponseWriter, r *http.Request, id string) {
 	if !ok {
 		jobsMu.Unlock()
 		http.Error(w, "job not found", http.StatusNotFound)
+		return
+	}
+
+	if req.Status == "failed" && job.RetryCount < maxJobRetries {
+		job.RetryCount++
+		job.Status = "pending"
+		job.ExitCode = nil
+		job.Stdout = ""
+		if req.Stderr != "" {
+			job.Stderr = req.Stderr
+		}
+		job.FinishedAt = nil
+		jobs[job.ID] = job
+		if err := jobStore.Save(job); err != nil {
+			log.Printf("failed to persist job %s: %v", job.ID, err)
+		}
+		jobsMu.Unlock()
+		log.Printf("PATCH /jobs/%s - retry %d queued", id, job.RetryCount)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(job)
 		return
 	}
 

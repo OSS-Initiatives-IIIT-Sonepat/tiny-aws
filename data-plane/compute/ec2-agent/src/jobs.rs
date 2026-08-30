@@ -207,6 +207,18 @@ async fn run_service(
         .unwrap_or_else(|_| std::fs::File::create(&log_path).unwrap());
     let log_clone = log_file.try_clone().unwrap_or_else(|_| std::fs::File::create(&log_path).unwrap());
 
+    // K1: on Linux, wrap with unshare for pid+mount namespace isolation when TINYAWS_ISOLATE=1
+    // ponytail: requires root (or user namespaces enabled); off by default; upgrade to rootless with newuidmap if needed
+    #[cfg(unix)]
+    let (prog, args) = if std::env::var("TINYAWS_ISOLATE").as_deref() == Ok("1") {
+        let mut wrapped = vec!["--pid", "--mount", "--fork", "--"];
+        wrapped.push(prog);
+        wrapped.extend_from_slice(&args);
+        ("unshare", wrapped)
+    } else {
+        (prog, args)
+    };
+
     let mut cmd = std::process::Command::new(prog);
     cmd.args(&args)
         .current_dir(&run_dir)

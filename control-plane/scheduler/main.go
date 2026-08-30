@@ -79,17 +79,17 @@ func main() {
 	go watchJobTimeouts()
 
 	http.HandleFunc("GET /health", handleHealth)
-	http.HandleFunc("GET /schedule", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("GET /schedule", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		handleSchedule(w, r, registryURL)
-	})
-	http.HandleFunc("GET /jobs/{id}", handleJobByID)
-	http.HandleFunc("PATCH /jobs/{id}", handleJobByID)
-	http.HandleFunc("GET /jobs", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	http.HandleFunc("GET /jobs/{id}", authMiddleware(handleJobByID))
+	http.HandleFunc("PATCH /jobs/{id}", authMiddleware(handleJobByID))
+	http.HandleFunc("GET /jobs", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		handleJobs(w, r, registryURL)
-	})
-	http.HandleFunc("POST /jobs", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	http.HandleFunc("POST /jobs", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		handleJobs(w, r, registryURL)
-	})
+	}))
 
 	log.Println("scheduler listening on :9001")
 	log.Fatal(http.ListenAndServe(":9001", nil))

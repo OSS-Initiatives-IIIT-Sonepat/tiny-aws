@@ -1,4 +1,4 @@
-.PHONY: registry agent storage scheduler cli smoke
+.PHONY: registry agent storage scheduler cli smoke install
 
 registry:
 	cd control-plane/registry && go run .
@@ -14,6 +14,9 @@ scheduler:
 
 cli:
 	cd control-plane/cli && go run .
+
+install:
+	cd control-plane/cli && go install .
 
 smoke:
 	powershell -ExecutionPolicy Bypass -File tests/integration/smoke-test.ps1

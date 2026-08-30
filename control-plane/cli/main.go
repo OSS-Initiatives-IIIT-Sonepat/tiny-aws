@@ -64,6 +64,12 @@ func main() {
 		runQueue(os.Args[2:])
 	case "lb":
 		runLB(os.Args[2:])
+	case "vpc":
+		runVPC(os.Args[2:])
+	case "subnet":
+		runSubnet(os.Args[2:])
+	case "sg":
+		runSG(os.Args[2:])
 	default:
 		printUsage()
 		os.Exit(1)

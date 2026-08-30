@@ -14,6 +14,10 @@ struct Job {
     deploy_url: String,
     #[serde(default)]
     instance_id: String,
+    #[serde(default)]
+    job_type: String, // "run" (default) | "service"
+    #[serde(default)]
+    port: u16,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -86,7 +90,7 @@ pub fn start_job_worker(node_id: String, scheduler_url: String, registry_url: St
                 continue;
             };
 
-            println!("picked up job {}", job.job_id);
+            println!("picked up job {} type={}", job.job_id, if job.job_type == "service" { "service" } else { "run" });
 
             if let Err(e) = mark_running(&client, &scheduler_url, &job.job_id).await {
                 eprintln!("failed to mark job running: {}", e);
@@ -101,6 +105,21 @@ pub fn start_job_worker(node_id: String, scheduler_url: String, registry_url: St
                 None
             };
 
+            // Service jobs: spawn detached, register with registry, don't block.
+            if job.job_type == "service" {
+                let client2 = client.clone();
+                let scheduler_url2 = scheduler_url.clone();
+                let registry_url2 = registry_url.clone();
+                let node_id2 = node_id.clone();
+                let job2 = job.clone();
+                let ws = workspace.clone();
+                tokio::spawn(async move {
+                    run_service(client2, scheduler_url2, registry_url2, node_id2, job2, ws).await;
+                });
+                continue;
+            }
+
+            // Run-once job: block until done, then report.
             let (exit_code, stdout, stderr) = if !job.deploy_url.is_empty() {
                 run_deploy(&client, &job.deploy_url, workspace.as_deref()).await
             } else {
@@ -109,22 +128,216 @@ pub fn start_job_worker(node_id: String, scheduler_url: String, registry_url: St
             let status = if exit_code == 0 { "done" } else { "failed" };
 
             if let Err(e) = report_result(
-                &client,
-                &scheduler_url,
-                &job.job_id,
-                status,
-                exit_code,
-                stdout,
-                stderr,
-            )
-            .await
-            {
+                &client, &scheduler_url, &job.job_id, status, exit_code, stdout, stderr,
+            ).await {
                 eprintln!("failed to report job result: {}", e);
             } else {
-                println!("job {} finished with status={}", job.job_id, status);
+                println!("job {} finished status={}", job.job_id, status);
             }
         }
     });
+}
+
+// Spawns a service process detached, registers it with the registry, monitors it.
+async fn run_service(
+    client: reqwest::Client,
+    scheduler_url: String,
+    registry_url: String,
+    node_id: String,
+    job: Job,
+    workspace: Option<PathBuf>,
+) {
+    // determine the deploy dir — download and extract zip if deploy_url set
+    let run_dir = if !job.deploy_url.is_empty() {
+        let dir = workspace.clone()
+            .unwrap_or_else(|| std::env::temp_dir().join(format!("tinyaws-svc-{}", job.job_id)));
+        if let Err(e) = download_and_extract(&client, &job.deploy_url, &dir).await {
+            eprintln!("service {}: extract failed: {}", job.job_id, e);
+            let _ = report_result(&client, &scheduler_url, &job.job_id, "failed", -1, String::new(), e).await;
+            return;
+        }
+        dir
+    } else {
+        workspace.clone().unwrap_or_else(|| std::env::temp_dir())
+    };
+
+    let log_path = run_dir.join("service.log");
+
+    // build the command
+    #[cfg(windows)]
+    let start_script = run_dir.join("start.ps1");
+    #[cfg(not(windows))]
+    let start_script = run_dir.join("start.sh");
+
+    let (prog, args): (&str, Vec<&str>) = if !job.command.is_empty() {
+        #[cfg(windows)]
+        { ("cmd", vec!["/C", &job.command]) }
+        #[cfg(not(windows))]
+        { ("sh", vec!["-c", &job.command]) }
+    } else if start_script.exists() {
+        #[cfg(windows)]
+        { ("powershell", vec!["-NoProfile", "-File", start_script.to_str().unwrap_or("")]) }
+        #[cfg(not(windows))]
+        { ("sh", vec![start_script.to_str().unwrap_or("")]) }
+    } else {
+        eprintln!("service {}: no command and no start script", job.job_id);
+        let _ = report_result(&client, &scheduler_url, &job.job_id, "failed", -1, String::new(), "no start script".into()).await;
+        return;
+    };
+
+    // open log file for stdout/stderr
+    let log_file = std::fs::OpenOptions::new()
+        .create(true).append(true).open(&log_path)
+        .unwrap_or_else(|_| std::fs::File::create(&log_path).unwrap());
+    let log_clone = log_file.try_clone().unwrap_or_else(|_| std::fs::File::create(&log_path).unwrap());
+
+    let mut cmd = std::process::Command::new(prog);
+    cmd.args(&args)
+        .current_dir(&run_dir)
+        .stdout(log_file)
+        .stderr(log_clone);
+
+    // Unix: new process group so we can kill the whole tree
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe { cmd.pre_exec(|| { libc::setpgid(0, 0); Ok(()) }); }
+    }
+
+    let child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("service {}: spawn failed: {}", job.job_id, e);
+            let _ = report_result(&client, &scheduler_url, &job.job_id, "failed", -1, String::new(), e.to_string()).await;
+            return;
+        }
+    };
+
+    let pid = child.id() as i32;
+    println!("service {} spawned pid={} port={} log={}", job.job_id, pid, job.port, log_path.display());
+
+    // register with registry so the LB and CLI can find it
+    let svc_id = register_service(&client, &registry_url, &node_id, &job, pid).await;
+
+    // I5: report job as running (worker loop is already free at this point)
+    // job was already marked running before this fn was called
+
+    // monitor: wait for process to exit, then update registry
+    let mut child = unsafe {
+        // wrap the raw child handle in a tokio child for async wait
+        // We used std::process::Command so we need to convert
+        // ponytail: re-spawn async just to wait — acceptable; upgrade to tokio::process if needed
+        child
+    };
+
+    let exit_status = tokio::task::spawn_blocking(move || child.wait()).await;
+
+    let exit_code = match exit_status {
+        Ok(Ok(status)) => status.code().unwrap_or(-1),
+        _ => -1,
+    };
+
+    let final_status = if exit_code == 0 { "done" } else { "crashed" };
+    println!("service {} exited exit_code={} status={}", job.job_id, exit_code, final_status);
+
+    // update registry service record
+    if let Some(ref id) = svc_id {
+        let url = format!("{}/services/{}", registry_url, id);
+        let _ = client.patch(&url)
+            .json(&serde_json::json!({"status": final_status}))
+            .send().await;
+    }
+
+    // report final job status to scheduler
+    let _ = report_result(
+        &client, &scheduler_url, &job.job_id,
+        if exit_code == 0 { "done" } else { "failed" },
+        exit_code, String::new(), String::new(),
+    ).await;
+}
+
+// Registers a service with the registry and returns its service ID.
+async fn register_service(
+    client: &reqwest::Client,
+    registry_url: &str,
+    node_id: &str,
+    job: &Job,
+    pid: i32,
+) -> Option<String> {
+    let payload = serde_json::json!({
+        "node_id": node_id,
+        "instance_id": job.instance_id,
+        "port": job.port,
+        "pid": pid,
+        "deploy_url": job.deploy_url,
+    });
+    match client.post(&format!("{}/services", registry_url))
+        .json(&payload).send().await
+    {
+        Ok(resp) => {
+            let svc: serde_json::Value = resp.json().await.unwrap_or_default();
+            svc["id"].as_str().map(|s| s.to_string())
+        }
+        Err(e) => {
+            eprintln!("service registration failed: {}", e);
+            None
+        }
+    }
+}
+
+// Downloads zip from deploy_url and extracts to dir.
+async fn download_and_extract(client: &reqwest::Client, deploy_url: &str, dir: &PathBuf) -> Result<(), String> {
+    let bytes = client.get(deploy_url).send().await
+        .map_err(|e| format!("download error: {}", e))?
+        .bytes().await
+        .map_err(|e| format!("download read error: {}", e))?;
+
+    std::fs::create_dir_all(dir).map_err(|e| format!("mkdir error: {}", e))?;
+    let zip_path = dir.join("app.zip");
+    std::fs::write(&zip_path, &bytes).map_err(|e| format!("write zip error: {}", e))?;
+
+    #[cfg(windows)]
+    let extract_cmd = format!("powershell -NoProfile -Command \"Expand-Archive -Force '{}' '{}'\"",
+        zip_path.to_string_lossy(), dir.to_string_lossy());
+    #[cfg(not(windows))]
+    let extract_cmd = format!("unzip -o '{}' -d '{}'", zip_path.to_string_lossy(), dir.to_string_lossy());
+
+    let (code, _, err) = run_command_in(&extract_cmd, None).await;
+    if code != 0 {
+        return Err(format!("extract failed: {}", err));
+    }
+    Ok(())
+}
+
+// Downloads zip from deploy_url, extracts to workspace (or temp dir), runs start script.
+async fn run_deploy(
+    client: &reqwest::Client,
+    deploy_url: &str,
+    workspace: Option<&Path>,
+) -> (i32, String, String) {
+    let deploy_dir = workspace
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::env::temp_dir().join("tinyaws-deploy"));
+
+    if let Err(e) = download_and_extract(client, deploy_url, &deploy_dir).await {
+        return (-1, String::new(), e);
+    }
+
+    #[cfg(windows)]
+    let start_script = deploy_dir.join("start.ps1");
+    #[cfg(not(windows))]
+    let start_script = deploy_dir.join("start.sh");
+
+    if !start_script.exists() {
+        return (-1, String::new(), "no start script found in deploy archive".into());
+    }
+
+    #[cfg(windows)]
+    let run_cmd = format!("powershell -NoProfile -File \"{}\"", start_script.to_string_lossy());
+    #[cfg(not(windows))]
+    let run_cmd = format!("sh '{}'", start_script.to_string_lossy());
+
+    run_command_in(&run_cmd, Some(&deploy_dir)).await
 }
 
 // B1: for each running instance ensure workspace dir exists; drops terminated ones.
@@ -143,71 +356,7 @@ fn sync_workspaces(instances: &[Instance], workspaces: &Arc<Mutex<HashMap<String
             map.insert(inst.id.clone(), path);
         }
     }
-    // remove terminated instances from map (workspace stays on disk until controller cleans it)
     map.retain(|id, _| instances.iter().any(|i| i.id == *id && i.status == "running"));
-}
-
-// Downloads zip from deploy_url, extracts to workspace (or temp dir), runs start script.
-async fn run_deploy(
-    client: &reqwest::Client,
-    deploy_url: &str,
-    workspace: Option<&Path>,
-) -> (i32, String, String) {
-    let bytes = match client.get(deploy_url).send().await {
-        Ok(resp) => match resp.bytes().await {
-            Ok(b) => b,
-            Err(e) => return (-1, String::new(), format!("download read error: {}", e)),
-        },
-        Err(e) => return (-1, String::new(), format!("download error: {}", e)),
-    };
-
-    let deploy_dir = workspace
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| std::env::temp_dir().join("tinyaws-deploy"));
-    let zip_path = deploy_dir.join("app.zip");
-
-    if let Err(e) = std::fs::create_dir_all(&deploy_dir) {
-        return (-1, String::new(), format!("mkdir error: {}", e));
-    }
-    if let Err(e) = std::fs::write(&zip_path, &bytes) {
-        return (-1, String::new(), format!("write zip error: {}", e));
-    }
-
-    let zip_str = zip_path.to_string_lossy();
-    let dir_str = deploy_dir.to_string_lossy();
-
-    // ponytail: shell-out extraction; add zip crate if cross-platform extraction without shell matters
-    #[cfg(windows)]
-    let extract_cmd = format!(
-        "powershell -NoProfile -Command \"Expand-Archive -Force '{}' '{}'\"",
-        zip_str, dir_str
-    );
-    #[cfg(not(windows))]
-    let extract_cmd = format!("unzip -o '{}' -d '{}'", zip_str, dir_str);
-
-    let (code, out, err) = run_command_in(&extract_cmd, None).await;
-    if code != 0 {
-        return (code, out, format!("extract failed: {}", err));
-    }
-
-    #[cfg(windows)]
-    let start_script = deploy_dir.join("start.ps1");
-    #[cfg(not(windows))]
-    let start_script = deploy_dir.join("start.sh");
-
-    if !start_script.exists() {
-        return (-1, String::new(), "no start script found in deploy archive".into());
-    }
-
-    #[cfg(windows)]
-    let run_cmd = format!(
-        "powershell -NoProfile -File \"{}\"",
-        start_script.to_string_lossy()
-    );
-    #[cfg(not(windows))]
-    let run_cmd = format!("sh '{}'", start_script.to_string_lossy());
-
-    run_command_in(&run_cmd, Some(&deploy_dir)).await
 }
 
 // Fetches all instances on this node from registry.
@@ -263,7 +412,7 @@ async fn report_result(
 }
 
 // B3: runs command in the given working directory (or current dir if None).
-// B4: on Unix spawns in a new process group for isolation; on Windows uses a Job Object.
+// B4: on Unix spawns in a new process group for isolation.
 async fn run_command_in(command: &str, workdir: Option<&Path>) -> (i32, String, String) {
     #[cfg(windows)]
     let mut cmd = {

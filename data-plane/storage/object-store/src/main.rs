@@ -4,11 +4,13 @@ mod config;
 mod ffi;
 mod metadata;
 mod registry;
+mod replication;
 mod server;
 mod store;
 
 use axum::{middleware, routing::get, routing::put, Router};
 use metadata::MetadataStore;
+use replication::ReplicationPolicy;
 use server::AppState;
 use std::sync::Arc;
 
@@ -26,10 +28,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let store = store::BlockStore::new(storage_root)?;
     let metadata = MetadataStore::new(metadata_db)?;
+    let repl = ReplicationPolicy::new();
+
+    // C5: background peer discovery from registry
+    replication::start_peer_discovery(repl.clone(), registry_url.clone(), node_id.clone());
 
     let state = AppState {
         store: Arc::new(store),
         metadata: Arc::new(metadata),
+        replication: repl,
     };
 
     let app = Router::new()

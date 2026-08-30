@@ -1,6 +1,7 @@
 use axum::http::HeaderMap;
 use sha2::{Digest, Sha256};
 use crate::metadata::{BucketMeta, MetadataStore, ObjectMeta};
+use crate::replication::ReplicationPolicy;
 use crate::store::BlockStore;
 use axum::{
     body::Bytes,
@@ -14,6 +15,7 @@ use std::sync::Arc;
 pub struct AppState {
     pub store: Arc<BlockStore>,
     pub metadata: Arc<MetadataStore>,
+    pub replication: ReplicationPolicy,
 }
 
 // Writes bytes to engine + metadata for a given object id.
@@ -52,7 +54,15 @@ pub async fn put_object(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<StatusCode, StatusCode> {
-    write_object(&state, &key, &headers, body.to_vec())?;
+    let content_type = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+    write_object(&state, &key, &headers, body.clone().to_vec())?;
+    // C3: replicate to peers after successful local write
+    let peers = state.replication.write_peers();
+    crate::replication::replicate_put(peers, &key, body, &content_type).await;
     Ok(StatusCode::CREATED)
 }
 
@@ -60,12 +70,16 @@ pub async fn get_object(
     State(state): State<AppState>,
     Path(key): Path<String>,
 ) -> Result<Bytes, StatusCode> {
-    let data = state
-        .store
-        .read_block(&key)
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-
-    Ok(Bytes::from(data))
+    match state.store.read_block(&key) {
+        Ok(data) => Ok(Bytes::from(data)),
+        Err(_) => {
+            // C4: local miss — try peers
+            let peers = state.replication.read_peers();
+            crate::replication::peer_get(peers, &key)
+                .await
+                .ok_or(StatusCode::NOT_FOUND)
+        }
+    }
 }
 
 pub async fn delete_object(
@@ -78,6 +92,10 @@ pub async fn delete_object(
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
     state.metadata.remove(&key).ok();
+
+    // C10: fan out DELETE to peers
+    let peers = state.replication.write_peers();
+    crate::replication::replicate_delete(peers, &key).await;
 
     Ok(StatusCode::NO_CONTENT)
 }

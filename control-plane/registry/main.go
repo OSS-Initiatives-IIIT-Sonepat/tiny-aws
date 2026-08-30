@@ -55,6 +55,7 @@ func main() {
 	http.HandleFunc("GET /instances", authMiddleware(handleInstances))
 	http.HandleFunc("POST /instances", authMiddleware(handleInstances))
 	http.HandleFunc("GET /instances/{id}", authMiddleware(handleInstanceGet))
+	http.HandleFunc("PATCH /instances/{id}", authMiddleware(handleInstancePatch))
 	http.HandleFunc("DELETE /instances/{id}", authMiddleware(handleInstanceByID))
 	http.HandleFunc("POST /iam/keys", authMiddleware(handleIAMKeyCreate))
 	http.HandleFunc("DELETE /iam/keys/{key}", authMiddleware(handleIAMKeyDelete))

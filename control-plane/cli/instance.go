@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,13 +12,17 @@ import (
 // Handles: tinyaws instance launch|list|terminate|info ...
 func runInstance(args []string) {
 	if len(args) < 1 {
-		fmt.Println("usage: tinyaws instance launch|list|terminate|info ...")
+		fmt.Println("usage: tinyaws instance launch [--type nano|micro|small|medium|large]")
+		fmt.Println("       tinyaws instance list")
+		fmt.Println("       tinyaws instance terminate <id>")
+		fmt.Println("       tinyaws instance info <id>")
+		fmt.Println("       tinyaws instance shell <id>")
 		os.Exit(1)
 	}
 
 	switch args[0] {
 	case "launch":
-		runInstanceLaunch()
+		runInstanceLaunch(args[1:])
 	case "list":
 		runInstanceList()
 	case "terminate":
@@ -32,15 +37,30 @@ func runInstance(args []string) {
 			os.Exit(1)
 		}
 		runInstanceInfo(args[1])
+	case "shell":
+		if len(args) < 2 {
+			fmt.Println("usage: tinyaws instance shell <id>")
+			os.Exit(1)
+		}
+		runInstanceShell(args[1])
 	default:
-		fmt.Println("usage: tinyaws instance launch|list|terminate|info ...")
+		fmt.Println("usage: tinyaws instance launch|list|terminate|info|shell ...")
 		os.Exit(1)
 	}
 }
 
-// POST /instances — launch a fake EC2 instance.
-func runInstanceLaunch() {
-	resp, err := httpPost(registryURL()+"/instances", "application/json", nil)
+// POST /instances — launch an instance. Optional --type flag sets resource limits.
+func runInstanceLaunch(args []string) {
+	instanceType := "small"
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "--type" {
+			instanceType = args[i+1]
+		}
+	}
+
+	payload, _ := json.Marshal(map[string]string{"instance_type": instanceType})
+	resp, err := httpPost(registryURL()+"/instances", "application/json",
+		bytes.NewReader(payload))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -131,9 +151,19 @@ func runInstanceInfo(id string) {
 		os.Exit(1)
 	}
 
-	// workspace path mirrors what the agent creates: $TEMP/tinyaws/<id>
-	fmt.Printf("id:        %s\n", inst["id"])
-	fmt.Printf("node:      %s\n", inst["node_id"])
-	fmt.Printf("status:    %s\n", inst["status"])
-	fmt.Printf("workspace: %s/tinyaws/%s\n", os.TempDir(), inst["id"])
+	fmt.Printf("id:            %s\n", inst["id"])
+	fmt.Printf("node:          %s\n", inst["node_id"])
+	fmt.Printf("status:        %s\n", inst["status"])
+	fmt.Printf("instance_type: %s\n", inst["instance_type"])
+	fmt.Printf("cpu_limit:     %s\n", inst["cpu_limit"])
+	fmt.Printf("mem_limit_mb:  %v\n", inst["mem_limit_mb"])
+	fmt.Printf("workspace:     /var/lib/tinyaws/instances/%s\n", inst["id"])
+}
+
+// runInstanceShell prints the machinectl command to drop into an instance shell.
+func runInstanceShell(id string) {
+	fmt.Printf("Run on the agent machine:\n")
+	fmt.Printf("  sudo machinectl shell %s\n", id)
+	fmt.Printf("\nOr to run a single command:\n")
+	fmt.Printf("  sudo systemd-run --machine=%s -- <command>\n", id)
 }

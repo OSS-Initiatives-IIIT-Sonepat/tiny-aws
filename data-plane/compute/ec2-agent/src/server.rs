@@ -1,3 +1,4 @@
+use crate::instances;
 use crate::node::Node;
 use serde_json::to_string;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -11,50 +12,90 @@ pub async fn start(node: &Node) -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         let (mut socket, address) = listener.accept().await?;
+        let node_json = to_string(node).unwrap_or_default();
 
-        println!("connection from {}", address);
+        tokio::spawn(async move {
+            println!("connection from {}", address);
 
-        let mut buffer = [0u8; 4096];
+            // read up to 64KB — enough for headers + small JSON bodies
+            let mut buffer = vec![0u8; 65536];
+            let bytes_read = match socket.read(&mut buffer).await {
+                Ok(n) => n,
+                Err(_) => return,
+            };
 
-        let bytes_read = socket.read(&mut buffer).await?;
+            let raw = String::from_utf8_lossy(&buffer[..bytes_read]);
 
-        let request = String::from_utf8_lossy(&buffer[..bytes_read]);
+            // parse method and path from first line
+            let mut lines = raw.lines();
+            let first = lines.next().unwrap_or("");
+            let mut parts = first.split_whitespace();
+            let method = parts.next().unwrap_or("GET");
+            let path = parts.next().unwrap_or("/");
 
-        let path = request
-            .lines()
-            .next()
-            .and_then(|line| line.split_whitespace().nth(1))
-            .unwrap_or("/");
+            // extract body (everything after \r\n\r\n)
+            let body = raw.find("\r\n\r\n")
+                .map(|i| raw[i + 4..].trim())
+                .unwrap_or("");
 
-        let (status, body) = match path {
-            "/health" => (
-                "200 OK",
-                r#"{"status":"healthy"}"#.to_string(),
-            ),
+            let (status, response_body) = handle_request(method, path, body, &node_json);
 
-            "/info" => (
-                "200 OK",
-                to_string(node)?,
-            ),
+            let response = format!(
+                "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                status, response_body.len(), response_body
+            );
 
-            _ => (
-                "404 Not Found",
-                r#"{"error":"not found"}"#.to_string(),
-            ),
-        };
+            let _ = socket.write_all(response.as_bytes()).await;
+        });
+    }
+}
 
-        let response = format!(
-            "HTTP/1.1 {}\r\n\
-             Content-Type: application/json\r\n\
-             Content-Length: {}\r\n\
-             Connection: close\r\n\
-             \r\n\
-             {}",
-            status,
-            body.len(),
-            body
-        );
+// handle_request dispatches to the right handler and returns (status_line, body).
+fn handle_request(method: &str, path: &str, body: &str, node_json: &str) -> (&'static str, String) {
+    match (method, path) {
+        ("GET", "/health") => (
+            "200 OK",
+            r#"{"status":"healthy","service":"ec2-agent"}"#.into(),
+        ),
+        ("GET", "/info") => ("200 OK", node_json.to_string()),
 
-        socket.write_all(response.as_bytes()).await?;
+        // POST /instances/{id}/provision — create nspawn container
+        ("POST", p) if p.starts_with("/instances/") && p.ends_with("/provision") => {
+            let id = p.trim_start_matches("/instances/").trim_end_matches("/provision");
+            match serde_json::from_str::<instances::InstanceSpec>(body) {
+                Ok(spec) => {
+                    let registry_url = std::env::var("REGISTRY_URL")
+                        .unwrap_or_else(|_| "http://127.0.0.1:9000".into());
+                    let inst_id = spec.id.clone();
+                    std::thread::spawn(move || {
+                        let status = match instances::provision(&spec) {
+                            Ok(_) => "running",
+                            Err(e) => {
+                                eprintln!("provision {}: {}", inst_id, e);
+                                "failed"
+                            }
+                        };
+                        // PATCH registry with final status
+                        let url = format!("{}/instances/{}", registry_url, inst_id);
+                        let payload = format!(r#"{{"status":"{}"}}"#, status);
+                        let _ = ureq::patch(&url)
+                            .set("content-type", "application/json")
+                            .send_string(&payload);
+                    });
+                    let _ = id;
+                    ("202 Accepted", r#"{"provisioning":true}"#.into())
+                }
+                Err(e) => ("400 Bad Request", format!(r#"{{"error":"{}"}}"#, e)),
+            }
+        }
+
+        // DELETE /instances/{id} — destroy nspawn container
+        ("DELETE", p) if p.starts_with("/instances/") => {
+            let id = p.trim_start_matches("/instances/");
+            instances::destroy(id);
+            ("204 No Content", String::new())
+        }
+
+        _ => ("404 Not Found", r#"{"error":"not found"}"#.into()),
     }
 }

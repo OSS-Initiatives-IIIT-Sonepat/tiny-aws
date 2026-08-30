@@ -1,5 +1,6 @@
 mod config;
 mod heartbeat;
+mod instances;
 mod jobs;
 mod node;
 mod registry;

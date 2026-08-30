@@ -135,10 +135,17 @@ pub fn start_job_worker(node_id: String, scheduler_url: String, registry_url: St
             }
 
             // Run-once job: block until done, then report.
+            // If instance has a real nspawn container, run inside it.
+            let nspawn_prefix = if !job.instance_id.is_empty() {
+                crate::instances::nspawn_exec(&job.instance_id)
+            } else {
+                None
+            };
+
             let (exit_code, stdout, stderr) = if !job.deploy_url.is_empty() {
                 run_deploy(&client, &job.deploy_url, workspace.as_deref()).await
             } else {
-                run_command_in(&job.command, workspace.as_deref()).await
+                run_command_in(&job.command, workspace.as_deref(), nspawn_prefix.as_deref()).await
             };
             let status = if exit_code == 0 { "done" } else { "failed" };
 
@@ -374,7 +381,7 @@ async fn download_and_extract(client: &reqwest::Client, deploy_url: &str, dir: &
     #[cfg(not(windows))]
     let extract_cmd = format!("unzip -o '{}' -d '{}'", zip_path.to_string_lossy(), dir.to_string_lossy());
 
-    let (code, _, err) = run_command_in(&extract_cmd, None).await;
+    let (code, _, err) = run_command_in(&extract_cmd, None, None).await;
     if code != 0 {
         return Err(format!("extract failed: {}", err));
     }
@@ -409,7 +416,7 @@ async fn run_deploy(
     #[cfg(not(windows))]
     let run_cmd = format!("sh '{}'", start_script.to_string_lossy());
 
-    run_command_in(&run_cmd, Some(&deploy_dir)).await
+    run_command_in(&run_cmd, Some(&deploy_dir), None).await
 }
 
 // J4: polls registry every 10s for stopped services on this node and SIGTERMs them.
@@ -525,7 +532,8 @@ async fn report_result(
 
 // B3: runs command in the given working directory (or current dir if None).
 // B4: on Unix spawns in a new process group for isolation.
-async fn run_command_in(command: &str, workdir: Option<&Path>) -> (i32, String, String) {
+// nspawn_prefix: when Some, prepends systemd-nspawn args to run inside a container.
+async fn run_command_in(command: &str, workdir: Option<&Path>, nspawn_prefix: Option<&[String]>) -> (i32, String, String) {
     #[cfg(windows)]
     let mut cmd = {
         let mut c = Command::new("cmd");
@@ -533,7 +541,13 @@ async fn run_command_in(command: &str, workdir: Option<&Path>) -> (i32, String, 
         c
     };
     #[cfg(not(windows))]
-    let mut cmd = {
+    let mut cmd = if let Some(prefix) = nspawn_prefix {
+        // run inside nspawn container: systemd-nspawn --machine=i-N --quiet -- sh -c <cmd>
+        let mut c = Command::new(&prefix[0]);
+        for arg in &prefix[1..] { c.arg(arg); }
+        c.args(["sh", "-c", command]);
+        c
+    } else {
         let mut c = Command::new("sh");
         c.args(["-c", command]);
         c

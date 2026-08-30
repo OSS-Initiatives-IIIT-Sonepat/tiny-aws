@@ -414,8 +414,9 @@ func pickNodeForInstance(registryURL, instanceID string) (*Node, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&inst); err != nil {
 		return nil, fmt.Errorf("failed to decode instance")
 	}
-	if inst.Status != "running" {
-		return nil, fmt.Errorf("instance %s not running (status=%s)", inst.ID, inst.Status)
+	// allow provisioning instances too — container may still be starting but node is valid
+	if inst.Status == "terminated" {
+		return nil, fmt.Errorf("instance %s is terminated", inst.ID)
 	}
 
 	nodes, err := fetchComputeNodes(registryURL)

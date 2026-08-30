@@ -242,6 +242,12 @@ async fn run_service(
         }
     }
 
+    // J5: background log upload to object store
+    let log_done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    if let Some(ref id) = svc_id {
+        start_log_upload(id.clone(), log_path.clone(), log_done.clone());
+    }
+
     // monitor: wait for process to exit, then update registry
     // ponytail: blocking wait in spawn_blocking; upgrade to tokio::process if needed
     let mut child = child;
@@ -252,6 +258,9 @@ async fn run_service(
         Ok(Ok(status)) => status.code().unwrap_or(-1),
         _ => -1,
     };
+
+    // signal log uploader to stop and do one final upload
+    log_done.store(true, std::sync::atomic::Ordering::Relaxed);
 
     let final_status = if exit_code == 0 { "done" } else { "crashed" };
     println!("service {} exited exit_code={} status={}", job.job_id, exit_code, final_status);
@@ -306,6 +315,30 @@ async fn register_service(
             None
         }
     }
+}
+
+// J5: tails log_path to object store every 30s until done_flag is set.
+// ponytail: full-read-and-PUT every 30s; upgrade to append-only streaming if log files get large
+fn start_log_upload(svc_id: String, log_path: std::path::PathBuf, done_flag: Arc<std::sync::atomic::AtomicBool>) {
+    let store_url = crate::config::object_store_url();
+    tokio::spawn(async move {
+        let client = reqwest::Client::new();
+        let mut ticker = interval(Duration::from_secs(30));
+        let key = format!("logs/{}/service.log", svc_id);
+        let url = format!("{}/objects/{}", store_url, key);
+        loop {
+            ticker.tick().await;
+            if let Ok(data) = std::fs::read(&log_path) {
+                let _ = client.put(&url)
+                    .header("content-type", "text/plain")
+                    .body(data)
+                    .send().await;
+            }
+            if done_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
+        }
+    });
 }
 
 // Downloads zip from deploy_url and extracts to dir.

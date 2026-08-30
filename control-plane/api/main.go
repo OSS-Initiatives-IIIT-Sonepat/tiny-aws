@@ -36,7 +36,7 @@ func main() {
 	http.Handle("/v1/health/store", proxy(objectStoreURL))
 
 	// registry
-	for _, p := range []string{"/v1/nodes", "/v1/instances", "/v1/iam"} {
+	for _, p := range []string{"/v1/nodes", "/v1/instances", "/v1/iam", "/v1/services"} {
 		http.Handle(p+"/", proxy(registryURL))
 		http.Handle(p, proxy(registryURL))
 	}

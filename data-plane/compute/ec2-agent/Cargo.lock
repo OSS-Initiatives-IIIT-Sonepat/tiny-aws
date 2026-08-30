@@ -90,6 +90,7 @@ name = "ec2-agent"
 version = "0.1.0"
 dependencies = [
  "hostname",
+ "libc",
  "num_cpus",
  "reqwest",
  "serde",

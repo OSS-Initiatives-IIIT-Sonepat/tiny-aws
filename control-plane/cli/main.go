@@ -13,7 +13,7 @@ Usage:
   tinyaws node list [--role compute|storage]
   tinyaws object put <key> [--data text] [--file path]
   tinyaws object get <key>
-  tinyaws job submit "<command>"
+  tinyaws job submit "<command>" [--instance i-1]
   tinyaws job status <job-id> [--wait]
   tinyaws instance launch
   tinyaws instance list

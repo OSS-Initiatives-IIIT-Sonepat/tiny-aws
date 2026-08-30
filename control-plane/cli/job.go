@@ -39,15 +39,31 @@ func runJob(args []string) {
 	}
 }
 
-// POST /jobs with {"command":"..."}.
+// POST /jobs with {"command":"..."} and optional instance_id.
 func runJobSubmit(args []string) {
 	if len(args) < 1 {
-		fmt.Println(`usage: tinyaws job submit "echo hello"`)
+		fmt.Println(`usage: tinyaws job submit "echo hello" [--instance i-1]`)
 		os.Exit(1)
 	}
 
 	command := args[0]
+	instanceID := ""
+
+	for i := 1; i < len(args); i++ {
+		if args[i] == "--instance" {
+			if i+1 >= len(args) {
+				fmt.Println("--instance requires a value")
+				os.Exit(1)
+			}
+			instanceID = args[i+1]
+			i++
+		}
+	}
+
 	payload := map[string]string{"command": command}
+	if instanceID != "" {
+		payload["instance_id"] = instanceID
+	}
 	b, _ := json.Marshal(payload)
 
 	resp, err := http.Post(schedulerURL()+"/jobs", "application/json", bytes.NewReader(b))

@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -14,10 +13,12 @@ import (
 	"time"
 )
 
-// Target is a backend agent with its health status.
+// Target is a backend with its health status and optional service ID.
 type Target struct {
-	URL     string `json:"url"`
-	Healthy bool   `json:"healthy"`
+	URL       string `json:"url"`
+	Healthy   bool   `json:"healthy"`
+	ServiceID string `json:"service_id,omitempty"` // set for service targets
+	NodeID    string `json:"node_id,omitempty"`
 }
 
 var (
@@ -46,6 +47,7 @@ func syncTargets() {
 }
 
 func refresh() {
+	// fetch healthy compute nodes (hostname map)
 	resp, err := http.Get(registryURL() + "/nodes?role=compute")
 	if err != nil {
 		log.Printf("lb: registry unreachable: %v", err)
@@ -58,26 +60,69 @@ func refresh() {
 		Status   string `json:"status"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&nodes); err != nil {
-		log.Printf("lb: decode error: %v", err)
+		log.Printf("lb: decode nodes error: %v", err)
 		return
 	}
 
-	// E4: health-check each node's agent; keep only responsive ones
+	// build node_id -> hostname map for service URL construction
+	hostByNode := map[string]string{}
+	for id, node := range nodes {
+		hostByNode[id] = node.Hostname
+	}
+
 	updated := []Target{}
-	for _, node := range nodes {
+
+	// agent targets (for direct agent proxying)
+	for id, node := range nodes {
 		if node.Status != "healthy" {
 			continue
 		}
 		agentURL := fmt.Sprintf("http://%s:8080", node.Hostname)
-		t := Target{URL: agentURL, Healthy: checkHealth(agentURL)}
+		if agentAddr := os.Getenv("AGENT_ADDR"); agentAddr != "" {
+			// if a custom port is configured globally, use it
+			agentURL = fmt.Sprintf("http://%s%s", node.Hostname, agentAddr)
+		}
+		t := Target{URL: agentURL, NodeID: id, Healthy: checkHealth(agentURL)}
 		updated = append(updated, t)
+	}
+
+	// service targets — deployed apps registered by agents
+	svcResp, err := http.Get(registryURL() + "/services?status=running")
+	if err == nil {
+		defer svcResp.Body.Close()
+		var services []struct {
+			ID     string `json:"id"`
+			NodeID string `json:"node_id"`
+			Port   int    `json:"port"`
+			Status string `json:"status"`
+		}
+		if json.NewDecoder(svcResp.Body).Decode(&services) == nil {
+			for _, svc := range services {
+				if svc.Port == 0 {
+					continue
+				}
+				host, ok := hostByNode[svc.NodeID]
+				if !ok {
+					continue
+				}
+				svcURL := fmt.Sprintf("http://%s:%d", host, svc.Port)
+				t := Target{URL: svcURL, NodeID: svc.NodeID, ServiceID: svc.ID, Healthy: checkHealth(svcURL)}
+				updated = append(updated, t)
+			}
+		}
 	}
 
 	targetsMu.Lock()
 	targets = updated
 	targetsMu.Unlock()
 
-	log.Printf("lb: targets refreshed: %d healthy", len(updated))
+	healthy := 0
+	for _, t := range updated {
+		if t.Healthy {
+			healthy++
+		}
+	}
+	log.Printf("lb: targets refreshed: %d total, %d healthy", len(updated), healthy)
 }
 
 // E4: GETs /health on the agent; true if 200.
@@ -153,20 +198,5 @@ func main() {
 	})
 
 	log.Printf("load balancer listening on %s", listenAddr)
-
-	// E5: list backends endpoint used by CLI
 	log.Fatal(http.ListenAndServe(listenAddr, nil))
-}
-
-// listTargets is a helper for the /targets response (used by CLI via GET /targets).
-func listTargets() ([]Target, error) {
-	resp, err := http.Get("http://127.0.0.1:8088/targets")
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	var out []Target
-	json.Unmarshal(body, &out)
-	return out, nil
 }

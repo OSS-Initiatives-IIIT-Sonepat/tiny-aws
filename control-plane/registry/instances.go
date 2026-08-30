@@ -15,13 +15,14 @@ import (
 
 // Instance is a compute instance — backed by a real systemd-nspawn container on the agent.
 type Instance struct {
-	ID          string    `json:"id"`
-	NodeID      string    `json:"node_id"`
-	Status      string    `json:"status"`
-	InstanceType string   `json:"instance_type"` // e.g. "small","medium","large"
-	CPULimit    string    `json:"cpu_limit"`      // systemd CPUQuota, e.g. "50%"
-	MemLimitMB  int       `json:"mem_limit_mb"`   // MemoryMax in MB, 0=unlimited
-	CreatedAt   time.Time `json:"created_at"`
+	ID           string    `json:"id"`
+	NodeID       string    `json:"node_id"`
+	Status       string    `json:"status"`
+	InstanceType string    `json:"instance_type"`
+	CPULimit     string    `json:"cpu_limit"`
+	MemLimitMB   int       `json:"mem_limit_mb"`
+	BaseImage    string    `json:"base_image,omitempty"` // path to rootfs base on agent machine
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type InstanceStore struct {
@@ -45,6 +46,7 @@ func NewInstanceStore(db *sql.DB) *InstanceStore {
 			instance_type TEXT NOT NULL DEFAULT 'small',
 			cpu_limit     TEXT NOT NULL DEFAULT '50%',
 			mem_limit_mb  INTEGER NOT NULL DEFAULT 512,
+			base_image    TEXT NOT NULL DEFAULT '',
 			created_at    TEXT NOT NULL
 		);
 	`)
@@ -54,6 +56,7 @@ func NewInstanceStore(db *sql.DB) *InstanceStore {
 	_, _ = db.Exec(`ALTER TABLE instances ADD COLUMN instance_type TEXT NOT NULL DEFAULT 'small'`)
 	_, _ = db.Exec(`ALTER TABLE instances ADD COLUMN cpu_limit TEXT NOT NULL DEFAULT '50%'`)
 	_, _ = db.Exec(`ALTER TABLE instances ADD COLUMN mem_limit_mb INTEGER NOT NULL DEFAULT 512`)
+	_, _ = db.Exec(`ALTER TABLE instances ADD COLUMN base_image TEXT NOT NULL DEFAULT ''`)
 
 	// Load max sequence so IDs don't reset on restart.
 	var maxSeq uint64

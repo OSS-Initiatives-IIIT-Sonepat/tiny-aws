@@ -32,19 +32,20 @@ function Test-Endpoint {
 Write-Host "tiny-aws integration smoke test"
 Write-Host ""
 
-Write-Host "[1/9] Service health"
+Write-Host "[1/10] Service health"
 Test-Endpoint "registry"      "http://127.0.0.1:9000/health"   '"status":"healthy"'
 Test-Endpoint "ec2-agent"     "http://127.0.0.1:8080/health"   '"status":"healthy"'
+Test-Endpoint "object-store"  "http://127.0.0.1:7001/health"   '"status":"healthy"'
 Test-Endpoint "scheduler"     "http://127.0.0.1:9001/health"   '"status":"healthy"'
 
 Write-Host ""
-Write-Host "[2/9] Registry nodes"
-Test-Endpoint "nodes"         "http://127.0.0.1:9000/nodes"    "."
-Test-Endpoint "compute nodes" "http://127.0.0.1:9000/nodes?role=compute" "."
+Write-Host "[2/10] Registry nodes"
+Test-Endpoint "nodes"         "http://127.0.0.1:9000/nodes"    '"id"'
+Test-Endpoint "compute nodes" "http://127.0.0.1:9000/nodes?role=compute" '"id"'
 Test-Endpoint "storage nodes" "http://127.0.0.1:9000/nodes?role=storage" "."
 
 Write-Host ""
-Write-Host "[3/9] Object store"
+Write-Host "[3/10] Object store"
 $objectKey = "smoke-test-$(Get-Date -Format 'HHmmss')"
 curl.exe -s -f @curlAuth -X PUT "http://127.0.0.1:7001/objects/$objectKey" -d "hello integration" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "object PUT failed" }
@@ -59,18 +60,18 @@ if ($meta -notmatch $objectKey) { throw "object meta missing key" }
 Write-Host "  object meta ok"
 
 Write-Host ""
-Write-Host "[4/9] Scheduler"
+Write-Host "[4/10] Scheduler"
 Test-Endpoint "schedule" "http://127.0.0.1:9001/schedule" '"node_id"'
 
 Write-Host ""
-Write-Host "[5/9] Job submission"
+Write-Host "[5/10] Job submission"
 $jobResponse = Invoke-RestMethod -Uri "http://127.0.0.1:9001/jobs" -Method Post -ContentType "application/json" -Headers $authHeader -Body '{"command":"echo hello"}'
 if (-not $jobResponse.job_id) { throw "job response missing job_id" }
 if (-not $jobResponse.node_id) { throw "job response missing node_id" }
 Write-Host "  submit job ok"
 
 Write-Host ""
-Write-Host "[6/9] Job execution"
+Write-Host "[6/10] Job execution"
 $jobId = $jobResponse.job_id
 $finalStatus = $null
 
@@ -90,7 +91,7 @@ if ($finalStatus.status -ne "done") {
 Write-Host "  job completed ok"
 
 Write-Host ""
-Write-Host "[7/9] Buckets"
+Write-Host "[7/10] Buckets"
 $bucket = "smoke-bucket-$(Get-Date -Format 'HHmmss')"
 curl.exe -s -f @curlAuth -X PUT "http://127.0.0.1:7001/buckets/$bucket" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "bucket create failed" }
@@ -105,13 +106,13 @@ if ($bucketBody -ne "bucket hello") { throw "bucket GET mismatch: $bucketBody" }
 Write-Host "  get bucket object ok"
 
 Write-Host ""
-Write-Host "[8/9] Instances"
+Write-Host "[8/10] Instances"
 $inst = Invoke-RestMethod -Uri "http://127.0.0.1:9000/instances" -Method Post -Headers $authHeader
 if (-not $inst.id) { throw "instance launch failed" }
 Write-Host "  launch instance ok"
 
 Write-Host ""
-Write-Host "[9/9] Instance-bound job"
+Write-Host "[9/10] Instance-bound job"
 $boundBody = @{ command = "echo instance-bound"; instance_id = $inst.id } | ConvertTo-Json
 $boundJob = Invoke-RestMethod -Uri "http://127.0.0.1:9001/jobs" -Method Post -ContentType "application/json" -Headers $authHeader -Body $boundBody
 if (-not $boundJob.job_id) { throw "bound job missing job_id" }

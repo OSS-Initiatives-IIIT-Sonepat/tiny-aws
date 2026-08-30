@@ -4,9 +4,11 @@ use std::path::PathBuf;
 #[derive(Debug, Deserialize)]
 pub struct InstanceSpec {
     pub id: String,
-    pub cpu_limit: String,      // systemd CPUQuota e.g. "100%"
-    pub mem_limit_mb: u64,      // MemoryMax in MB
+    pub cpu_limit: String,
+    pub mem_limit_mb: u64,
     pub instance_type: String,
+    #[serde(default)]
+    pub base_image: String, // path to rootfs base; empty = use TINYAWS_ROOTFS_BASE default
 }
 
 // rootfs_base returns the base rootfs path all instances clone from.
@@ -28,7 +30,12 @@ pub fn rootfs_path(instance_id: &str) -> PathBuf {
 // then boots it as a systemd-nspawn container with the given resource limits.
 // ponytail: cp -a is simpler than overlayfs; use overlayfs when disk space matters
 pub fn provision(spec: &InstanceSpec) -> Result<(), String> {
-    let base = rootfs_base();
+    // use spec.base_image if set, otherwise fall back to env/default
+    let base = if spec.base_image.is_empty() {
+        rootfs_base()
+    } else {
+        PathBuf::from(&spec.base_image)
+    };
     let dest = rootfs_path(&spec.id);
 
     if !base.exists() {

@@ -11,6 +11,7 @@ import (
 type Node struct {
 	ID       string    `json:"id"`
 	Hostname string    `json:"hostname"`
+	Addr     string    `json:"addr"` // routable address — set via AGENT_ADVERTISE_ADDR on agent
 	CPUCount int       `json:"cpu_count"`
 	Role     string    `json:"role"`
 	Status   string    `json:"status"`

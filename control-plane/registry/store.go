@@ -22,6 +22,7 @@ func NewNodeStore(path string) *NodeStore {
 		CREATE TABLE IF NOT EXISTS nodes (
 			id         TEXT PRIMARY KEY,
 			hostname   TEXT NOT NULL,
+			addr       TEXT NOT NULL DEFAULT '',
 			cpu_count  INTEGER NOT NULL,
 			role       TEXT NOT NULL,
 			status     TEXT NOT NULL,
@@ -35,6 +36,8 @@ func NewNodeStore(path string) *NodeStore {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// migrate existing DBs that don't have the addr column yet
+	_, _ = db.Exec(`ALTER TABLE nodes ADD COLUMN addr TEXT NOT NULL DEFAULT ''`)
 
 	return &NodeStore{db: db}
 }
@@ -51,26 +54,23 @@ func (s *NodeStore) Delete(id string) error {
 
 func (s *NodeStore) Save(node Node) error {
 	_, err := s.db.Exec(
-		`INSERT INTO nodes (id, hostname, cpu_count, role, status, last_seen)
-		 VALUES (?, ?, ?, ?, ?, ?)
+		`INSERT INTO nodes (id, hostname, addr, cpu_count, role, status, last_seen)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   hostname = excluded.hostname,
+		   addr = excluded.addr,
 		   cpu_count = excluded.cpu_count,
 		   role = excluded.role,
 		   status = excluded.status,
 		   last_seen = excluded.last_seen`,
-		node.ID,
-		node.Hostname,
-		node.CPUCount,
-		node.Role,
-		node.Status,
-		node.LastSeen.Format(time.RFC3339),
+		node.ID, node.Hostname, node.Addr, node.CPUCount,
+		node.Role, node.Status, node.LastSeen.Format(time.RFC3339),
 	)
 	return err
 }
 
 func (s *NodeStore) LoadAll() (map[string]Node, error) {
-	rows, err := s.db.Query(`SELECT id, hostname, cpu_count, role, status, last_seen FROM nodes`)
+	rows, err := s.db.Query(`SELECT id, hostname, addr, cpu_count, role, status, last_seen FROM nodes`)
 	if err != nil {
 		return nil, err
 	}
@@ -83,12 +83,8 @@ func (s *NodeStore) LoadAll() (map[string]Node, error) {
 		var lastSeen string
 
 		if err := rows.Scan(
-			&node.ID,
-			&node.Hostname,
-			&node.CPUCount,
-			&node.Role,
-			&node.Status,
-			&lastSeen,
+			&node.ID, &node.Hostname, &node.Addr, &node.CPUCount,
+			&node.Role, &node.Status, &lastSeen,
 		); err != nil {
 			return nil, err
 		}

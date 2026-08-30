@@ -20,15 +20,20 @@ pub struct NodeRegistration {
     pub hostname:  String,
     pub cpu_count: usize,
     pub role:      String,
+    pub addr:      String, // routable address for LB/service routing; set via AGENT_ADVERTISE_ADDR
 }
 
 impl NodeRegistration {
     pub fn from_node(node: &Node) -> Self {
+        // ponytail: AGENT_ADVERTISE_ADDR overrides hostname for multi-machine clusters
+        let addr = std::env::var("AGENT_ADVERTISE_ADDR")
+            .unwrap_or_else(|_| node.system.hostname.clone());
         Self {
             id:        node.id.clone(),
             hostname:  node.system.hostname.clone(),
             cpu_count: node.system.cpu_count,
             role:      "compute".to_string(),
+            addr,
         }
     }
 }
@@ -72,6 +77,8 @@ mod tests {
         assert_eq!(registration.hostname, "test-node");
         assert_eq!(registration.cpu_count, 8);
         assert_eq!(registration.role, "compute");
+        // addr defaults to hostname when AGENT_ADVERTISE_ADDR not set
+        assert_eq!(registration.addr, "test-node");
 
         let json = serde_json::to_string(&registration).expect("serialization failed");
         assert!(json.contains("test-node"));

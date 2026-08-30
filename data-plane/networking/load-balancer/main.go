@@ -57,6 +57,7 @@ func refresh() {
 
 	var nodes map[string]struct {
 		Hostname string `json:"hostname"`
+		Addr     string `json:"addr"`
 		Status   string `json:"status"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&nodes); err != nil {
@@ -77,10 +78,14 @@ func refresh() {
 		if node.Status != "healthy" {
 			continue
 		}
-		agentURL := fmt.Sprintf("http://%s:8080", node.Hostname)
+		// prefer addr (AGENT_ADVERTISE_ADDR) over hostname for multi-machine clusters
+		host := node.Addr
+		if host == "" {
+			host = node.Hostname
+		}
+		agentURL := fmt.Sprintf("http://%s:8080", host)
 		if agentAddr := os.Getenv("AGENT_ADDR"); agentAddr != "" {
-			// if a custom port is configured globally, use it
-			agentURL = fmt.Sprintf("http://%s%s", node.Hostname, agentAddr)
+			agentURL = fmt.Sprintf("http://%s%s", host, agentAddr)
 		}
 		t := Target{URL: agentURL, NodeID: id, Healthy: checkHealth(agentURL)}
 		updated = append(updated, t)

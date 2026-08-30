@@ -57,6 +57,8 @@ var (
 	jobStore *JobStore
 )
 
+const jobTimeout = 60 * time.Second
+
 func main() {
 	registryURL := getenv("REGISTRY_URL", "http://127.0.0.1:9000")
 	dbPath := getenv("SCHEDULER_DB", "scheduler.db")
@@ -69,6 +71,8 @@ func main() {
 	}
 	jobs = loaded
 	jobSeq = maxSeq
+
+	go watchJobTimeouts()
 
 	http.HandleFunc("GET /health", handleHealth)
 	http.HandleFunc("GET /schedule", func(w http.ResponseWriter, r *http.Request) {
@@ -360,4 +364,39 @@ func getenv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// Marks running jobs as failed if they exceed jobTimeout.
+func watchJobTimeouts() {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		now := time.Now()
+
+		jobsMu.Lock()
+		for id, job := range jobs {
+			if job.Status != "running" {
+				continue
+			}
+			if now.Sub(job.CreatedAt) <= jobTimeout {
+				continue
+			}
+
+			code := -1
+			job.Status = "failed"
+			job.ExitCode = &code
+			job.Stderr = "job timed out"
+			finished := now.UTC()
+			job.FinishedAt = &finished
+			jobs[id] = job
+
+			if err := jobStore.Save(job); err != nil {
+				log.Printf("failed to persist timed-out job %s: %v", id, err)
+			} else {
+				log.Printf("job %s timed out", id)
+			}
+		}
+		jobsMu.Unlock()
+	}
 }

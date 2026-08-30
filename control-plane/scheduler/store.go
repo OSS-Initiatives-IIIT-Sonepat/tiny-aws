@@ -26,6 +26,7 @@ func NewJobStore(path string) *JobStore {
 		CREATE TABLE IF NOT EXISTS jobs (
 			id          TEXT PRIMARY KEY,
 			node_id     TEXT NOT NULL,
+			instance_id TEXT NOT NULL DEFAULT '',
 			command     TEXT NOT NULL,
 			status      TEXT NOT NULL,
 			exit_code   INTEGER,
@@ -38,6 +39,8 @@ func NewJobStore(path string) *JobStore {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	_, _ = db.Exec(`ALTER TABLE jobs ADD COLUMN instance_id TEXT NOT NULL DEFAULT ''`)
 
 	return &JobStore{db: db}
 }
@@ -55,10 +58,11 @@ func (s *JobStore) Save(job Job) error {
 	}
 
 	_, err := s.db.Exec(
-		`INSERT INTO jobs (id, node_id, command, status, exit_code, stdout, stderr, created_at, finished_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO jobs (id, node_id, instance_id, command, status, exit_code, stdout, stderr, created_at, finished_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   node_id = excluded.node_id,
+		   instance_id = excluded.instance_id,
 		   command = excluded.command,
 		   status = excluded.status,
 		   exit_code = excluded.exit_code,
@@ -68,6 +72,7 @@ func (s *JobStore) Save(job Job) error {
 		   finished_at = excluded.finished_at`,
 		job.ID,
 		job.NodeID,
+		job.InstanceID,
 		job.Command,
 		job.Status,
 		exitCode,
@@ -82,7 +87,7 @@ func (s *JobStore) Save(job Job) error {
 // Loads all jobs from DB and returns the highest job-N sequence number.
 func (s *JobStore) LoadAll() (map[string]Job, uint64, error) {
 	rows, err := s.db.Query(`
-		SELECT id, node_id, command, status, exit_code, stdout, stderr, created_at, finished_at
+		SELECT id, node_id, instance_id, command, status, exit_code, stdout, stderr, created_at, finished_at
 		FROM jobs`)
 	if err != nil {
 		return nil, 0, err
@@ -101,6 +106,7 @@ func (s *JobStore) LoadAll() (map[string]Job, uint64, error) {
 		if err := rows.Scan(
 			&job.ID,
 			&job.NodeID,
+			&job.InstanceID,
 			&job.Command,
 			&job.Status,
 			&exitCode,

@@ -19,12 +19,14 @@ type Node struct {
 }
 
 type JobRequest struct {
-	Command string `json:"command"`
+	Command    string `json:"command"`
+	InstanceID string `json:"instance_id,omitempty"`
 }
 
 type Job struct {
 	ID         string     `json:"job_id"`
 	NodeID     string     `json:"node_id"`
+	InstanceID string     `json:"instance_id,omitempty"`
 	Command    string     `json:"command"`
 	Status     string     `json:"status"`
 	ExitCode   *int       `json:"exit_code,omitempty"`
@@ -32,6 +34,12 @@ type Job struct {
 	Stderr     string     `json:"stderr,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
+}
+
+type Instance struct {
+	ID     string `json:"id"`
+	NodeID string `json:"node_id"`
+	Status string `json:"status"`
 }
 
 type JobUpdateRequest struct {
@@ -140,7 +148,14 @@ func submitJob(w http.ResponseWriter, r *http.Request, registryURL string) {
 		return
 	}
 
-	node, err := pickHealthyComputeNode(registryURL)
+	var node *Node
+	var err error
+
+	if req.InstanceID != "" {
+		node, err = pickNodeForInstance(registryURL, req.InstanceID)
+	} else {
+		node, err = pickHealthyComputeNode(registryURL)
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
@@ -148,11 +163,12 @@ func submitJob(w http.ResponseWriter, r *http.Request, registryURL string) {
 
 	seq := atomic.AddUint64(&jobSeq, 1)
 	job := Job{
-		ID:        fmt.Sprintf("job-%d", seq),
-		NodeID:    node.ID,
-		Command:   req.Command,
-		Status:    "pending",
-		CreatedAt: time.Now().UTC(),
+		ID:         fmt.Sprintf("job-%d", seq),
+		NodeID:     node.ID,
+		InstanceID: req.InstanceID,
+		Command:    req.Command,
+		Status:     "pending",
+		CreatedAt:  time.Now().UTC(),
 	}
 
 	jobsMu.Lock()
@@ -162,7 +178,7 @@ func submitJob(w http.ResponseWriter, r *http.Request, registryURL string) {
 	}
 	jobsMu.Unlock()
 
-	log.Printf("POST /jobs - job %s assigned to node %s", job.ID, job.NodeID)
+	log.Printf("POST /jobs - job %s assigned to node %s instance=%s", job.ID, job.NodeID, job.InstanceID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -256,7 +272,7 @@ func updateJob(w http.ResponseWriter, r *http.Request, id string) {
 	json.NewEncoder(w).Encode(job)
 }
 
-func pickHealthyComputeNode(registryURL string) (*Node, error) {
+func fetchComputeNodes(registryURL string) ([]Node, error) {
 	resp, err := http.Get(registryURL + "/nodes?role=compute")
 	if err != nil {
 		return nil, fmt.Errorf("failed to reach registry")
@@ -271,6 +287,56 @@ func pickHealthyComputeNode(registryURL string) (*Node, error) {
 	var nodes map[string]Node
 	if err := json.Unmarshal(body, &nodes); err != nil {
 		return nil, fmt.Errorf("failed to decode registry response")
+	}
+
+	out := make([]Node, 0, len(nodes))
+	for _, node := range nodes {
+		out = append(out, node)
+	}
+	return out, nil
+}
+
+func pickNodeForInstance(registryURL, instanceID string) (*Node, error) {
+	resp, err := http.Get(registryURL + "/instances/" + instanceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to reach registry")
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("instance not found")
+	}
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("registry error: %s", string(body))
+	}
+
+	var inst Instance
+	if err := json.NewDecoder(resp.Body).Decode(&inst); err != nil {
+		return nil, fmt.Errorf("failed to decode instance")
+	}
+	if inst.Status != "running" {
+		return nil, fmt.Errorf("instance %s not running (status=%s)", inst.ID, inst.Status)
+	}
+
+	nodes, err := fetchComputeNodes(registryURL)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, node := range nodes {
+		if node.ID == inst.NodeID && node.Status == "healthy" {
+			return &node, nil
+		}
+	}
+
+	return nil, fmt.Errorf("node %s for instance %s is not healthy", inst.NodeID, inst.ID)
+}
+
+func pickHealthyComputeNode(registryURL string) (*Node, error) {
+	nodes, err := fetchComputeNodes(registryURL)
+	if err != nil {
+		return nil, err
 	}
 
 	healthy := make([]Node, 0)

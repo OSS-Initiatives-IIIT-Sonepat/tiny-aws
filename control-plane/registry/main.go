@@ -50,6 +50,7 @@ func main() {
 	http.HandleFunc("POST /nodes/heartbeat", handleHeartbeat)
 	http.HandleFunc("GET /instances", handleInstances)
 	http.HandleFunc("POST /instances", handleInstances)
+	http.HandleFunc("GET /instances/{id}", handleInstanceGet)
 	http.HandleFunc("DELETE /instances/{id}", handleInstanceByID)
 
 	go checkNodesHealth()

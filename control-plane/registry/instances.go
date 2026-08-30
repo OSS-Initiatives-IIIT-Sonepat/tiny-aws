@@ -109,7 +109,7 @@ func (s *InstanceStore) Terminate(id string) error {
 func handleInstances(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		listInstances(w)
+		listInstances(w, r)
 	case http.MethodPost:
 		launchInstance(w)
 	}
@@ -125,12 +125,49 @@ func handleInstanceByID(w http.ResponseWriter, r *http.Request) {
 	terminateInstance(w, id)
 }
 
-// Returns all instances as JSON array.
-func listInstances(w http.ResponseWriter) {
+// GET /instances/{id} — fetch one instance.
+func handleInstanceGet(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "instance id required", http.StatusBadRequest)
+		return
+	}
+
 	instancesMu.RLock()
 	defer instancesMu.RUnlock()
+
+	for _, inst := range instances {
+		if inst.ID == id {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(inst)
+			return
+		}
+	}
+
+	http.Error(w, "instance not found", http.StatusNotFound)
+}
+
+// Returns instances as JSON array (?node_id= and ?status= filters).
+func listInstances(w http.ResponseWriter, r *http.Request) {
+	nodeID := r.URL.Query().Get("node_id")
+	status := r.URL.Query().Get("status")
+
+	instancesMu.RLock()
+	defer instancesMu.RUnlock()
+
+	filtered := make([]Instance, 0)
+	for _, inst := range instances {
+		if nodeID != "" && inst.NodeID != nodeID {
+			continue
+		}
+		if status != "" && inst.Status != status {
+			continue
+		}
+		filtered = append(filtered, inst)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(instances)
+	json.NewEncoder(w).Encode(filtered)
 }
 
 // Picks healthy compute node and creates a running instance.

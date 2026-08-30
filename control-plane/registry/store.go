@@ -29,15 +29,17 @@ func NewNodeStore(path string) *NodeStore {
 			last_seen  TEXT NOT NULL
 		);
 		CREATE TABLE IF NOT EXISTS api_keys (
-			key  TEXT PRIMARY KEY,
-			role TEXT NOT NULL
+			key        TEXT PRIMARY KEY,
+			role       TEXT NOT NULL,
+			expires_at TEXT
 		);
 	`)
 	if err != nil {
 		log.Fatal(err)
 	}
-	// migrate existing DBs that don't have the addr column yet
+	// migrate existing DBs
 	_, _ = db.Exec(`ALTER TABLE nodes ADD COLUMN addr TEXT NOT NULL DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE api_keys ADD COLUMN expires_at TEXT`)
 
 	return &NodeStore{db: db}
 }

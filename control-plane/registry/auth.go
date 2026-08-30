@@ -4,13 +4,14 @@ import (
 	"database/sql"
 	"net/http"
 	"os"
+	"time"
 )
 
 // iamDB is the shared registry DB, wired in main after store is created.
 var iamDB *sql.DB
 
 // roleForKey looks up key in the api_keys table; falls back to the env var key (admin).
-// Returns "" if the key is not recognized.
+// Returns "" if the key is not recognized or is expired.
 func roleForKey(key string) string {
 	envKey := os.Getenv("TINYAWS_API_KEY")
 	if envKey != "" && key == envKey {
@@ -20,9 +21,17 @@ func roleForKey(key string) string {
 		return ""
 	}
 	var role string
-	err := iamDB.QueryRow(`SELECT role FROM api_keys WHERE key = ?`, key).Scan(&role)
+	var expiresAt sql.NullString
+	err := iamDB.QueryRow(`SELECT role, expires_at FROM api_keys WHERE key = ?`, key).Scan(&role, &expiresAt)
 	if err != nil {
 		return ""
+	}
+	// check expiry — NULL means never expires
+	if expiresAt.Valid && expiresAt.String != "" {
+		exp, err := time.Parse(time.RFC3339, expiresAt.String)
+		if err == nil && time.Now().After(exp) {
+			return "" // expired
+		}
 	}
 	return role
 }

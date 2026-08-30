@@ -30,17 +30,25 @@ func runAuth(args []string) {
 // authSetKey POSTs a key/role to /iam/keys on the registry.
 func authSetKey(args []string) {
 	if len(args) < 1 {
-		fmt.Println("usage: tinyaws auth set-key <key> [--role admin|readonly]")
+		fmt.Println("usage: tinyaws auth set-key <key> [--role admin|readonly] [--expires 2026-12-31T00:00:00Z]")
 		os.Exit(1)
 	}
 	key := args[0]
 	role := "admin"
+	expires := ""
 	for i := 1; i < len(args)-1; i++ {
-		if args[i] == "--role" {
+		switch args[i] {
+		case "--role":
 			role = args[i+1]
+		case "--expires":
+			expires = args[i+1]
 		}
 	}
-	body, _ := json.Marshal(map[string]string{"key": key, "role": role})
+	payload := map[string]string{"key": key, "role": role}
+	if expires != "" {
+		payload["expires_at"] = expires
+	}
+	body, _ := json.Marshal(payload)
 	resp, err := httpPost(registryURL()+"/iam/keys", "application/json", bytes.NewReader(body))
 	if err != nil {
 		fmt.Println("error:", err)
@@ -52,7 +60,11 @@ func authSetKey(args []string) {
 		fmt.Printf("error %d: %s\n", resp.StatusCode, msg)
 		os.Exit(1)
 	}
-	fmt.Printf("key set (role=%s)\n", role)
+	if expires != "" {
+		fmt.Printf("key set (role=%s expires=%s)\n", role, expires)
+	} else {
+		fmt.Printf("key set (role=%s)\n", role)
+	}
 }
 
 // authWhoami shows the role of the current TINYAWS_API_KEY by querying /iam/keys.

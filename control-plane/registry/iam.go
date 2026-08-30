@@ -8,11 +8,12 @@ import (
 
 // APIKey represents a key/role pair stored in the api_keys table.
 type APIKey struct {
-	Key  string `json:"key"`
-	Role string `json:"role"`
+	Key       string `json:"key"`
+	Role      string `json:"role"`
+	ExpiresAt string `json:"expires_at,omitempty"` // RFC3339 or empty = never
 }
 
-// POST /iam/keys — add a key. Body: {"key":"...","role":"admin|readonly"}
+// POST /iam/keys — add a key. Body: {"key":"...","role":"admin|readonly","expires_at":"2026-12-31T00:00:00Z"}
 func handleIAMKeyCreate(w http.ResponseWriter, r *http.Request) {
 	var k APIKey
 	if err := json.NewDecoder(r.Body).Decode(&k); err != nil || k.Key == "" {
@@ -23,15 +24,20 @@ func handleIAMKeyCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "role must be admin or readonly", http.StatusBadRequest)
 		return
 	}
+	var expiresAt interface{} = nil
+	if k.ExpiresAt != "" {
+		expiresAt = k.ExpiresAt
+	}
 	_, err := iamDB.Exec(
-		`INSERT INTO api_keys (key, role) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET role = excluded.role`,
-		k.Key, k.Role,
+		`INSERT INTO api_keys (key, role, expires_at) VALUES (?, ?, ?)
+		 ON CONFLICT(key) DO UPDATE SET role = excluded.role, expires_at = excluded.expires_at`,
+		k.Key, k.Role, expiresAt,
 	)
 	if err != nil {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
-	log.Printf("POST /iam/keys - upserted key role=%s", k.Role)
+	log.Printf("POST /iam/keys - upserted key role=%s expires=%s", k.Role, k.ExpiresAt)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(k)
@@ -52,9 +58,9 @@ func handleIAMKeyDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// GET /iam/keys — list all keys (roles only, not the key values).
+// GET /iam/keys — list all keys with role and expiry.
 func handleIAMKeyList(w http.ResponseWriter, r *http.Request) {
-	rows, err := iamDB.Query(`SELECT key, role FROM api_keys`)
+	rows, err := iamDB.Query(`SELECT key, role, expires_at FROM api_keys`)
 	if err != nil {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
@@ -63,9 +69,13 @@ func handleIAMKeyList(w http.ResponseWriter, r *http.Request) {
 	out := []APIKey{}
 	for rows.Next() {
 		var k APIKey
-		if err := rows.Scan(&k.Key, &k.Role); err != nil {
+		var exp *string
+		if err := rows.Scan(&k.Key, &k.Role, &exp); err != nil {
 			http.Error(w, "scan error", http.StatusInternalServerError)
 			return
+		}
+		if exp != nil {
+			k.ExpiresAt = *exp
 		}
 		out = append(out, k)
 	}

@@ -20,6 +20,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # Go — control plane
       - name: Build registry
         run: go build ./...
         working-directory: control-plane/registry
@@ -36,6 +37,35 @@ jobs:
         run: go build ./...
         working-directory: control-plane/api
 
+      - name: Build controller
+        run: go build ./...
+        working-directory: control-plane/controller
+
+      - name: Build metadata
+        run: go build ./...
+        working-directory: control-plane/metadata
+
+      - name: Build SQS
+        run: go build ./...
+        working-directory: control-plane/messaging/sqs
+
+      - name: Build SNS
+        run: go build ./...
+        working-directory: control-plane/messaging/sns
+
+      - name: Build networking/vpc
+        run: go build ./...
+        working-directory: control-plane/networking/vpc
+
+      - name: Build lambda-runtime
+        run: go build ./...
+        working-directory: data-plane/compute/lambda-runtime
+
+      - name: Build load-balancer
+        run: go build ./...
+        working-directory: data-plane/networking/load-balancer
+
+      # Rust — data plane
       - name: Build ec2-agent
         run: cargo build
         working-directory: data-plane/compute/ec2-agent
@@ -44,16 +74,16 @@ jobs:
         run: cargo build
         working-directory: data-plane/storage/object-store
 
-      - name: Start stack
+      - name: Start core stack
         shell: pwsh
         env:
           TINYAWS_API_KEY: ci-smoke-key
         run: |
           Start-Process go -ArgumentList "run","." -WorkingDirectory "$env:GITHUB_WORKSPACE/control-plane/registry"
           Start-Sleep -Seconds 3
-          Start-Process cargo -ArgumentList "run" -WorkingDirectory "$env:GITHUB_WORKSPACE/data-plane/compute/ec2-agent"
-          Start-Sleep -Seconds 5
-          Start-Process cargo -ArgumentList "run" -WorkingDirectory "$env:GITHUB_WORKSPACE/data-plane/storage/object-store"
+          Start-Process -FilePath "$env:GITHUB_WORKSPACE/data-plane/compute/ec2-agent/target/debug/ec2-agent.exe"
+          Start-Sleep -Seconds 3
+          Start-Process -FilePath "$env:GITHUB_WORKSPACE/data-plane/storage/object-store/target/debug/object-store.exe"
           Start-Sleep -Seconds 8
           Start-Process go -ArgumentList "run","." -WorkingDirectory "$env:GITHUB_WORKSPACE/control-plane/scheduler"
           Start-Sleep -Seconds 3

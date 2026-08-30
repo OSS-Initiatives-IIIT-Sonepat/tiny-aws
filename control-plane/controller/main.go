@@ -36,31 +36,36 @@ func reconcileLoop() {
 	cleaned := make(map[string]bool)
 
 	for range ticker.C {
-		resp, err := http.Get(registryURL() + "/instances")
-		if err != nil {
-			log.Printf("reconcile: registry unreachable: %v", err)
-			continue
-		}
+		reconcileOnce(cleaned)
+	}
+}
 
-		var instances []Instance
-		if err := json.NewDecoder(resp.Body).Decode(&instances); err != nil {
-			resp.Body.Close()
-			log.Printf("reconcile: decode error: %v", err)
-			continue
-		}
+// reconcileOnce runs one reconcile pass; exported so /reconcile endpoint can trigger it.
+func reconcileOnce(cleaned map[string]bool) {
+	resp, err := http.Get(registryURL() + "/instances")
+	if err != nil {
+		log.Printf("reconcile: registry unreachable: %v", err)
+		return
+	}
+
+	var instances []Instance
+	if err := json.NewDecoder(resp.Body).Decode(&instances); err != nil {
 		resp.Body.Close()
+		log.Printf("reconcile: decode error: %v", err)
+		return
+	}
+	resp.Body.Close()
 
-		for _, inst := range instances {
-			if inst.Status != "terminated" || cleaned[inst.ID] {
-				continue
-			}
-			path := workspacePath(inst.ID)
-			if err := os.RemoveAll(path); err != nil {
-				log.Printf("reconcile: remove workspace %s: %v", path, err)
-			} else {
-				log.Printf("reconcile: cleaned workspace %s", path)
-				cleaned[inst.ID] = true
-			}
+	for _, inst := range instances {
+		if inst.Status != "terminated" || cleaned[inst.ID] {
+			continue
+		}
+		path := workspacePath(inst.ID)
+		if err := os.RemoveAll(path); err != nil {
+			log.Printf("reconcile: remove workspace %s: %v", path, err)
+		} else {
+			log.Printf("reconcile: cleaned workspace %s", path)
+			cleaned[inst.ID] = true
 		}
 	}
 }
@@ -71,12 +76,27 @@ func main() {
 		listenAddr = ":9002"
 	}
 
-	go reconcileLoop()
+	cleaned := make(map[string]bool)
+
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			reconcileOnce(cleaned)
+		}
+	}()
 
 	// health endpoint
 	http.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintln(w, `{"status":"healthy","service":"controller"}`)
+	})
+
+	// manual reconcile trigger
+	http.HandleFunc("POST /reconcile", func(w http.ResponseWriter, r *http.Request) {
+		reconcileOnce(cleaned)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintln(w, `{"reconciled":true}`)
 	})
 
 	log.Printf("controller listening on %s", listenAddr)

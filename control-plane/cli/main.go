@@ -58,6 +58,8 @@ func main() {
 		runDeploy(os.Args[2:])
 	case "auth":
 		runAuth(os.Args[2:])
+	case "storage":
+		runStorage(os.Args[2:])
 	default:
 		printUsage()
 		os.Exit(1)

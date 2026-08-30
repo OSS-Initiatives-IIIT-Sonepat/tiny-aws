@@ -34,6 +34,7 @@ func NewJobStore(path string) *JobStore {
 			stdout      TEXT NOT NULL DEFAULT '',
 			stderr      TEXT NOT NULL DEFAULT '',
 			created_at  TEXT NOT NULL,
+			running_at  TEXT,
 			finished_at TEXT,
 			retry_count INTEGER NOT NULL DEFAULT 0
 		);
@@ -45,6 +46,7 @@ func NewJobStore(path string) *JobStore {
 	_, _ = db.Exec(`ALTER TABLE jobs ADD COLUMN instance_id TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE jobs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`)
 	_, _ = db.Exec(`ALTER TABLE jobs ADD COLUMN deploy_url TEXT NOT NULL DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE jobs ADD COLUMN running_at TEXT`)
 
 	return &JobStore{db: db}
 }
@@ -56,14 +58,19 @@ func (s *JobStore) Save(job Job) error {
 		exitCode = *job.ExitCode
 	}
 
+	var runningAt any
+	if job.RunningAt != nil {
+		runningAt = job.RunningAt.Format(time.RFC3339)
+	}
+
 	var finishedAt any
 	if job.FinishedAt != nil {
 		finishedAt = job.FinishedAt.Format(time.RFC3339)
 	}
 
 	_, err := s.db.Exec(
-		`INSERT INTO jobs (id, node_id, instance_id, command, deploy_url, status, retry_count, exit_code, stdout, stderr, created_at, finished_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO jobs (id, node_id, instance_id, command, deploy_url, status, retry_count, exit_code, stdout, stderr, created_at, running_at, finished_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   node_id = excluded.node_id,
 		   instance_id = excluded.instance_id,
@@ -75,19 +82,11 @@ func (s *JobStore) Save(job Job) error {
 		   stdout = excluded.stdout,
 		   stderr = excluded.stderr,
 		   created_at = excluded.created_at,
+		   running_at = excluded.running_at,
 		   finished_at = excluded.finished_at`,
-		job.ID,
-		job.NodeID,
-		job.InstanceID,
-		job.Command,
-		job.DeployURL,
-		job.Status,
-		job.RetryCount,
-		exitCode,
-		job.Stdout,
-		job.Stderr,
-		job.CreatedAt.Format(time.RFC3339),
-		finishedAt,
+		job.ID, job.NodeID, job.InstanceID, job.Command, job.DeployURL,
+		job.Status, job.RetryCount, exitCode, job.Stdout, job.Stderr,
+		job.CreatedAt.Format(time.RFC3339), runningAt, finishedAt,
 	)
 	return err
 }
@@ -95,7 +94,7 @@ func (s *JobStore) Save(job Job) error {
 // Loads all jobs from DB and returns the highest job-N sequence number.
 func (s *JobStore) LoadAll() (map[string]Job, uint64, error) {
 	rows, err := s.db.Query(`
-		SELECT id, node_id, instance_id, command, deploy_url, status, retry_count, exit_code, stdout, stderr, created_at, finished_at
+		SELECT id, node_id, instance_id, command, deploy_url, status, retry_count, exit_code, stdout, stderr, created_at, running_at, finished_at
 		FROM jobs`)
 	if err != nil {
 		return nil, 0, err
@@ -108,22 +107,14 @@ func (s *JobStore) LoadAll() (map[string]Job, uint64, error) {
 	for rows.Next() {
 		var job Job
 		var created string
+		var runningAt sql.NullString
 		var finished sql.NullString
 		var exitCode sql.NullInt64
 
 		if err := rows.Scan(
-			&job.ID,
-			&job.NodeID,
-			&job.InstanceID,
-			&job.Command,
-			&job.DeployURL,
-			&job.Status,
-			&job.RetryCount,
-			&exitCode,
-			&job.Stdout,
-			&job.Stderr,
-			&created,
-			&finished,
+			&job.ID, &job.NodeID, &job.InstanceID, &job.Command, &job.DeployURL,
+			&job.Status, &job.RetryCount, &exitCode, &job.Stdout, &job.Stderr,
+			&created, &runningAt, &finished,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -136,6 +127,14 @@ func (s *JobStore) LoadAll() (map[string]Job, uint64, error) {
 		if exitCode.Valid {
 			code := int(exitCode.Int64)
 			job.ExitCode = &code
+		}
+
+		if runningAt.Valid {
+			t, err := time.Parse(time.RFC3339, runningAt.String)
+			if err != nil {
+				return nil, 0, err
+			}
+			job.RunningAt = &t
 		}
 
 		if finished.Valid {

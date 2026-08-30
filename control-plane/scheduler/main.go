@@ -37,6 +37,7 @@ type Job struct {
 	Stdout     string     `json:"stdout,omitempty"`
 	Stderr     string     `json:"stderr,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
+	RunningAt  *time.Time `json:"running_at,omitempty"`
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
 }
 
@@ -62,9 +63,23 @@ var (
 )
 
 const (
-	jobTimeout   = 60 * time.Second
 	maxJobRetries = 1
 )
+
+// jobTimeout returns JOB_TIMEOUT_SECS env (default 3600 — 1 hour).
+// Services need much more time than the old hardcoded 60s.
+func jobTimeout() time.Duration {
+	v := os.Getenv("JOB_TIMEOUT_SECS")
+	if v == "" {
+		return 3600 * time.Second
+	}
+	var n int
+	fmt.Sscanf(v, "%d", &n)
+	if n < 1 {
+		n = 3600
+	}
+	return time.Duration(n) * time.Second
+}
 
 func main() {
 	registryURL := getenv("REGISTRY_URL", "http://127.0.0.1:9000")
@@ -300,6 +315,10 @@ func updateJob(w http.ResponseWriter, r *http.Request, id string) {
 	}
 
 	job.Status = req.Status
+	if req.Status == "running" {
+		now := time.Now().UTC()
+		job.RunningAt = &now
+	}
 	if req.ExitCode != nil {
 		job.ExitCode = req.ExitCode
 	}
@@ -436,20 +455,26 @@ func maxJobsPerNode() int {
 	return n
 }
 
-// Marks running jobs as failed if they exceed jobTimeout.
+// Marks running jobs as failed if they exceed jobTimeout (measured from running_at).
 func watchJobTimeouts() {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
 	for range ticker.C {
 		now := time.Now()
+		timeout := jobTimeout()
 
 		jobsMu.Lock()
 		for id, job := range jobs {
 			if job.Status != "running" {
 				continue
 			}
-			if now.Sub(job.CreatedAt) <= jobTimeout {
+			// measure from when the job actually started running, not when it was created
+			start := job.CreatedAt
+			if job.RunningAt != nil {
+				start = *job.RunningAt
+			}
+			if now.Sub(start) <= timeout {
 				continue
 			}
 

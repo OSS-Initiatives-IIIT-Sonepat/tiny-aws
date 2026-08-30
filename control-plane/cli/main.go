@@ -62,6 +62,8 @@ func main() {
 		runStorage(os.Args[2:])
 	case "queue":
 		runQueue(os.Args[2:])
+	case "lb":
+		runLB(os.Args[2:])
 	default:
 		printUsage()
 		os.Exit(1)

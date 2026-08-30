@@ -1,0 +1,112 @@
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-go:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+
+      # go vet on every module
+      - name: go vet registry
+        run: go vet ./...
+        working-directory: control-plane/registry
+
+      - name: go vet scheduler
+        run: go vet ./...
+        working-directory: control-plane/scheduler
+
+      - name: go vet cli
+        run: go vet ./...
+        working-directory: control-plane/cli
+
+      - name: go vet api
+        run: go vet ./...
+        working-directory: control-plane/api
+
+      - name: go vet controller
+        run: go vet ./...
+        working-directory: control-plane/controller
+
+      - name: go vet metadata
+        run: go vet ./...
+        working-directory: control-plane/metadata
+
+      - name: go vet sqs
+        run: go vet ./...
+        working-directory: control-plane/messaging/sqs
+
+      - name: go vet sns
+        run: go vet ./...
+        working-directory: control-plane/messaging/sns
+
+      - name: go vet networking/vpc
+        run: go vet ./...
+        working-directory: control-plane/networking/vpc
+
+      - name: go vet lambda-runtime
+        run: go vet ./...
+        working-directory: data-plane/compute/lambda-runtime
+
+      - name: go vet load-balancer
+        run: go vet ./...
+        working-directory: data-plane/networking/load-balancer
+
+      # golangci-lint on modules that matter most
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: control-plane/registry
+
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: control-plane/scheduler
+
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: control-plane/cli
+
+  lint-rust:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      # ec2-agent: no C++ dep, clippy runs fast
+      - name: clippy ec2-agent
+        run: cargo clippy -- -D warnings
+        working-directory: data-plane/compute/ec2-agent
+
+      # network-agent: no C++ dep
+      - name: clippy network-agent
+        run: cargo clippy -- -D warnings
+        working-directory: data-plane/networking/network-agent
+
+      # common types crate
+      - name: clippy common/types
+        run: cargo clippy -- -D warnings
+        working-directory: data-plane/common/types
+
+      # object-store: skip clippy (requires cmake + C++ toolchain, covered by build job)
+      # cargo check only to catch type errors without full C++ build
+      - name: Install cmake
+        run: sudo apt-get install -y cmake
+      - name: cargo check object-store
+        run: cargo check
+        working-directory: data-plane/storage/object-store

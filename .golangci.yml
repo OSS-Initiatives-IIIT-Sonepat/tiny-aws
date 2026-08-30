@@ -1,0 +1,41 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - ineffassign
+  settings:
+    errcheck:
+      exclude-functions:
+        # HTTP response writes — nothing actionable if these fail
+        - (*encoding/json.Encoder).Encode
+        - fmt.Fprintln
+        - fmt.Fprintf
+        - os.Stdout.Write
+        - io.Copy
+        # Deferred cleanup — errors are non-actionable
+        - (*os.File).Close
+        - (*archive/zip.Writer).Close
+        - (*net/http.Response).Body.Close
+        - (*database/sql.Rows).Close
+        - (io.Closer).Close
+        - os.Remove
+        # Scan/Sscanf with fallback default
+        - (*database/sql.Row).Scan
+        - (*database/sql.Rows).Scan
+        - fmt.Sscanf
+        # Fire-and-forget HTTP calls (ack, heartbeat, SNS publish)
+        - (*net/http.Client).Do
+        # Best-effort JSON decode in CLI display paths
+        - (*encoding/json.Decoder).Decode
+        - encoding/json.Unmarshal
+        # DB ops where the caller logs internally
+        - (*database/sql.DB).Exec
+  exclusions:
+    rules:
+      # Ignore unchecked errors in deferred close statements
+      - linters: [errcheck]
+        text: "defer"

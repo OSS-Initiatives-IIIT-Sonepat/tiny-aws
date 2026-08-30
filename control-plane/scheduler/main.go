@@ -551,7 +551,9 @@ func pollSQSQueue(sqsURL, registryURL string) {
 			}
 			jobsMu.Lock()
 			jobs[job.ID] = job
-			jobStore.Save(job)
+			if err := jobStore.Save(job); err != nil {
+				log.Printf("sqs: failed to persist job %s: %v", job.ID, err)
+			}
 			jobsMu.Unlock()
 			log.Printf("sqs: queued job %s from message %s", job.ID, msg.ID)
 		}

@@ -141,5 +141,5 @@ func runObjectGet(args []string) {
 		os.Exit(1)
 	}
 
-	os.Stdout.Write(body)
+	_, _ = os.Stdout.Write(body)
 }

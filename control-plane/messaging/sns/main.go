@@ -84,8 +84,9 @@ func handleListTopics(w http.ResponseWriter, r *http.Request) {
 	names := []string{}
 	for rows.Next() {
 		var name string
-		rows.Scan(&name)
-		names = append(names, name)
+		if err := rows.Scan(&name); err == nil {
+			names = append(names, name)
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(names)
@@ -131,8 +132,9 @@ func handlePublish(w http.ResponseWriter, r *http.Request) {
 	var endpoints []string
 	for rows.Next() {
 		var ep string
-		rows.Scan(&ep)
-		endpoints = append(endpoints, ep)
+		if err := rows.Scan(&ep); err == nil {
+			endpoints = append(endpoints, ep)
+		}
 	}
 
 	payload, _ := json.Marshal(map[string]string{"topic": topic, "message": req.Message})

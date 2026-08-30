@@ -178,7 +178,7 @@ func main() {
 		out, _ := json.Marshal(targets)
 		targetsMu.RUnlock()
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(out)
+		_, _ = w.Write(out)
 	})
 
 	// catch-all: proxy to next healthy agent

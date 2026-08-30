@@ -115,5 +115,10 @@ func queueReceive(name string) {
 
 	// ack automatically
 	req, _ := http.NewRequest(http.MethodDelete, sqsURL()+"/queues/"+name+"/messages/"+msg.ID, nil)
-	httpDo(req)
+	if req != nil {
+		resp, _ := httpDo(req)
+		if resp != nil {
+			resp.Body.Close()
+		}
+	}
 }

@@ -107,8 +107,9 @@ func handleListQueues(w http.ResponseWriter, r *http.Request) {
 	names := []string{}
 	for rows.Next() {
 		var name string
-		rows.Scan(&name)
-		names = append(names, name)
+		if err := rows.Scan(&name); err == nil {
+			names = append(names, name)
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(names)

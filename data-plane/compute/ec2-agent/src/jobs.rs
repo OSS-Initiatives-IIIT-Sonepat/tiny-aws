@@ -158,7 +158,7 @@ async fn run_service(
         }
         dir
     } else {
-        workspace.clone().unwrap_or_else(|| std::env::temp_dir())
+        workspace.clone().unwrap_or_else(std::env::temp_dir)
     };
 
     let log_path = run_dir.join("service.log");
@@ -219,16 +219,9 @@ async fn run_service(
     // register with registry so the LB and CLI can find it
     let svc_id = register_service(&client, &registry_url, &node_id, &job, pid).await;
 
-    // I5: report job as running (worker loop is already free at this point)
-    // job was already marked running before this fn was called
-
     // monitor: wait for process to exit, then update registry
-    let mut child = unsafe {
-        // wrap the raw child handle in a tokio child for async wait
-        // We used std::process::Command so we need to convert
-        // ponytail: re-spawn async just to wait — acceptable; upgrade to tokio::process if needed
-        child
-    };
+    // ponytail: blocking wait in spawn_blocking; upgrade to tokio::process if needed
+    let mut child = child;
 
     let exit_status = tokio::task::spawn_blocking(move || child.wait()).await;
 
@@ -271,7 +264,7 @@ async fn register_service(
         "pid": pid,
         "deploy_url": job.deploy_url,
     });
-    match client.post(&format!("{}/services", registry_url))
+    match client.post(format!("{}/services", registry_url))
         .json(&payload).send().await
     {
         Ok(resp) => {

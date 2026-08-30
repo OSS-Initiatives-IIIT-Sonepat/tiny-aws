@@ -1,202 +1,301 @@
 # tiny-aws
 
-A small AWS-like cloud platform.
+Your own private cloud on a Linux machine. Deploy apps, run jobs, store objects,
+and spin up isolated compute instances — all from a CLI that works like AWS.
 
-## Architecture
-
-- **control-plane/registry** (Go, :9000) — node registry (SQLite-backed)
-- **control-plane/scheduler** (Go, :9001) — picks healthy compute nodes
-- **control-plane/cli** — `tinyaws` command-line tool
-- **data-plane/compute/ec2-agent** (Rust, :8080) — compute agent
-- **data-plane/storage/object-store** (Rust + C++, :7001) — object storage
-
-## Prerequisites
-
-- Go 1.21+
-- Rust (latest stable)
-- CMake + C++17 compiler (Visual Studio Build Tools on Windows)
-
-## Start order (important)
-
-1. Registry first
-2. EC2 agent second
-3. Object store third
-4. Scheduler (optional, after registry + agent)
-
-## Run locally
-
-### Terminal 1 — Registry
-
-```powershell
-cd control-plane/registry
-go run .
+```bash
+tinyaws instance launch --type medium
+tinyaws deploy ./my-web-app --service --port 3000 --instance i-1
+tinyaws service list
+curl http://localhost:8088/   # load balancer routes to it
 ```
 
-Wait for: `node registry listening on :9000`
+---
 
-### Terminal 2 — EC2 Agent
+## What it is
 
-```powershell
-cd data-plane/compute/ec2-agent
-cargo run
+tiny-aws is a self-hosted mini-AWS that runs on a single Linux box (or a small
+cluster). It gives you:
+
+| AWS equivalent | tiny-aws |
+|----------------|----------|
+| EC2 instances | `systemd-nspawn` containers, own filesystem + network |
+| S3 | C++ block engine + Rust HTTP API |
+| ECS / deploy | `tinyaws deploy ./app --service --port N` |
+| ELB | Round-robin reverse proxy |
+| SQS | SQLite-backed queue |
+| SNS | HTTP fan-out pub/sub |
+| IAM | Bearer tokens with roles + expiry |
+| VPC / SGs | Metadata + `iptables` rules via network agent |
+
+---
+
+## Quick start (Linux / Arch)
+
+### 1. Install dependencies
+
+**Arch Linux:**
+```bash
+sudo pacman -S go rust cmake base-devel debootstrap unzip netcat
 ```
 
-### Terminal 3 — Object Store
-
-```powershell
-cd data-plane/storage/object-store
-cargo run
+**Debian / Ubuntu:**
+```bash
+sudo apt install golang-go rustc cargo cmake build-essential debootstrap unzip netcat-openbsd
 ```
 
-### Terminal 4 — Scheduler (optional)
+### 2. Get the code and build
 
-```powershell
-cd control-plane/scheduler
-go run .
+```bash
+git clone https://github.com/OSS-Initiatives-IIIT-Sonepat/tiny-aws.git
+cd tiny-aws
+
+# build Rust crates (2-5 min first time)
+cd data-plane/compute/ec2-agent    && cargo build && cd ../..
+cd data-plane/storage/object-store && cargo build && cd ../..
 ```
 
-## CLI
+### 3. Bootstrap base rootfs (for real compute instances)
 
-Install (optional):
+```bash
+# Debian (default)
+sudo ./scripts/bootstrap-rootfs.sh
 
-```powershell
+# Ubuntu
+sudo ./scripts/bootstrap-rootfs.sh ubuntu jammy
+
+# Custom base dir
+sudo TINYAWS_ROOTFS_BASE=/opt/tinyaws/base ./scripts/bootstrap-rootfs.sh
+```
+
+This runs `debootstrap` once into `/var/lib/tinyaws/base`. Every instance you
+launch clones from this. Takes 3-5 minutes, needs internet.
+
+### 4. Start the stack
+
+```bash
+# optionally configure env first
+cp .env.example .env.local
+# edit .env.local — set TINYAWS_API_KEY, AGENT_ADVERTISE_ADDR, etc.
+
+./scripts/run-local.sh
+```
+
+Starts: registry (:9000), ec2-agent (:8080), object-store (:7001),
+scheduler (:9001), controller (:9002), load-balancer (:8088).
+
+### 5. Install the CLI
+
+```bash
 cd control-plane/cli
 go install .
-# binary lands in your GOPATH/bin as tinyaws.exe
+export PATH=$PATH:$(go env GOPATH)/bin
+tinyaws --help
 ```
 
-Or run without installing:
+### 6. Verify
 
-```powershell
-cd control-plane/cli
-go run . node list
-go run . node list --role compute
-go run . node list --healthy-only
-go run . object put my-key --data "hello"
-go run . object get my-key
-go run . job submit "echo hello"
-go run . job submit "echo bound" --instance i-1
-go run . job status job-1 --wait
-go run . instance launch
-go run . instance list
-go run . instance terminate i-1
-go run . bucket create my-bucket
-go run . bucket list
-go run . object put file.txt --bucket my-bucket --data "hi"
-go run . deploy ./my-app --instance i-1 --wait
+```bash
+./tests/integration/smoke-test.sh
 ```
 
-### Deploy workflow
+---
 
-1. Create an app folder with a `start.ps1` (Windows) or `start.sh` (Linux).
-2. Launch an instance: `tinyaws instance launch`
-3. Deploy: `tinyaws deploy ./my-app --instance i-1 --wait`
+## Deploy your first app
 
-The CLI zips your folder, uploads it to the `deployments` bucket, and submits a job on the instance node to download and run `start.ps1`.
+```bash
+# create a simple app
+mkdir my-app
+cat > my-app/start.sh << 'EOF'
+#!/bin/bash
+python3 -m http.server 3000
+EOF
+chmod +x my-app/start.sh
 
-## Verify cluster
+# launch an instance (real container)
+tinyaws instance launch --type small
+# wait ~10s for status to go provisioning → running
+tinyaws instance list
 
-```powershell
-curl.exe http://127.0.0.1:9000/health
-curl.exe http://127.0.0.1:8080/health
-curl.exe http://127.0.0.1:9001/health
-curl.exe http://127.0.0.1:9000/nodes
-curl.exe http://127.0.0.1:9000/nodes?role=compute
-curl.exe http://127.0.0.1:9000/nodes?role=storage
-curl.exe http://127.0.0.1:9001/schedule
+# deploy as a long-running service
+tinyaws deploy ./my-app --service --port 3000 --instance i-1
+
+# check it's running
+tinyaws service list
+
+# hit it through the load balancer
+curl http://localhost:8088/
+
+# or direct
+curl http://localhost:3000/
 ```
 
-## Integration smoke test
+---
 
-Start the full stack, then run:
+## Instance types
 
-```powershell
-.\scripts\run-local.ps1
-# wait for all services to start, then:
-.\tests\integration\smoke-test.ps1
+| Type | CPU quota | RAM | Use for |
+|------|-----------|-----|---------|
+| `nano` | 25% | 128 MB | tiny scripts |
+| `micro` | 50% | 256 MB | light APIs |
+| `small` | 100% (1 core) | 512 MB | web apps |
+| `medium` | 200% (2 cores) | 1 GB | k8s workers |
+| `large` | 400% (4 cores) | 2 GB | k8s server |
+
+```bash
+tinyaws instance launch --type large
+tinyaws instance info i-1      # shows cpu_limit, mem_limit_mb, status
+tinyaws instance shell i-1     # prints: sudo machinectl shell i-1
+tinyaws instance terminate i-1 # stops container, frees disk
 ```
 
-## Scheduler API
+---
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | Scheduler health |
-| GET | `/schedule` | Pick a healthy compute node |
-| POST | `/jobs` | Submit a job (`{"command":"echo hello","instance_id":"i-1"}` optional) |
-| GET | `/jobs` | List submitted jobs |
+## Deploy a Kubernetes cluster
 
-```powershell
-curl.exe -X POST http://127.0.0.1:9001/jobs -H "Content-Type: application/json" -d "{\"command\":\"echo hello\"}"
-curl.exe http://127.0.0.1:9001/jobs
+```bash
+chmod +x examples/kubernetes/deploy-cluster.sh
+./examples/kubernetes/deploy-cluster.sh             # 1 server + 2 workers
+./examples/kubernetes/deploy-cluster.sh --workers 4 # 1 server + 4 workers
 ```
 
-## Test storage
-
-```powershell
-curl.exe -X PUT http://127.0.0.1:7001/objects/test-001 -d "hello tiny-aws"
-curl.exe http://127.0.0.1:7001/objects/test-001
-curl.exe http://127.0.0.1:7001/objects/test-001/meta
-curl.exe http://127.0.0.1:7001/objects
+Then:
+```bash
+sudo machinectl shell i-1   # shell into the k3s server
+kubectl get nodes
 ```
 
-### Buckets
+See [examples/kubernetes/README.md](examples/kubernetes/README.md) for details.
 
-```powershell
-curl.exe -X PUT http://127.0.0.1:7001/buckets/my-bucket
-curl.exe -X PUT http://127.0.0.1:7001/buckets/my-bucket/objects/file.txt -d "data"
-curl.exe http://127.0.0.1:7001/buckets/my-bucket/objects/file.txt
-curl.exe http://127.0.0.1:7001/buckets
+---
+
+## All CLI commands
+
 ```
+tinyaws instance launch [--type nano|micro|small|medium|large]
+tinyaws instance list
+tinyaws instance info <id>
+tinyaws instance shell <id>        # prints machinectl command
+tinyaws instance terminate <id>
+
+tinyaws deploy <dir> [--instance i-1] [--service] [--port N] [--wait]
+
+tinyaws service list
+tinyaws service stop <id>
+tinyaws service logs <id>
+
+tinyaws job submit "<cmd>" [--instance i-1]
+tinyaws job status <id> [--wait]
+
+tinyaws object put <key> [--data text] [--file path] [--bucket name]
+tinyaws object get <key> [--bucket name]
+tinyaws bucket create <name>
+tinyaws bucket list
+
+tinyaws node list [--role compute|storage] [--healthy-only]
+tinyaws storage node list
+
+tinyaws auth set-key <key> [--role admin|readonly] [--expires 2027-01-01T00:00:00Z]
+tinyaws auth whoami
+
+tinyaws queue create <name>
+tinyaws queue send <name> <message>
+tinyaws queue receive <name>
+
+tinyaws vpc create <name> <cidr>
+tinyaws subnet create <vpc-id> <cidr>
+tinyaws sg create <vpc-id> <name>
+tinyaws sg allow <sg-id> inbound tcp 80 0.0.0.0/0
+
+tinyaws lambda create <name> --runtime python3|node20 [--file code.zip]
+tinyaws lambda invoke <name> [--event '{"key":"val"}']
+
+tinyaws lb list
+```
+
+---
+
+## Auth (optional)
+
+Set a shared API key to require authentication on all APIs:
+
+```bash
+# .env.local
+TINYAWS_API_KEY=your-secret
+
+# or per-session
+export TINYAWS_API_KEY=your-secret
+```
+
+Agents (register, heartbeat, job poll) are exempt — they don't need the key.
+
+Add additional keys with roles:
+```bash
+tinyaws auth set-key readonly-key --role readonly
+tinyaws auth set-key temp-key --role admin --expires 2027-01-01T00:00:00Z
+tinyaws auth whoami
+```
+
+---
+
+## Multi-machine cluster
+
+Run the control plane on one machine, agents on others:
+
+**Machine A (control plane):**
+```bash
+export OBJECT_STORE_ADDR=0.0.0.0:7001
+./scripts/run-local.sh
+```
+
+**Machine B, C… (compute agents):**
+```bash
+export REGISTRY_URL=http://<machine-a-ip>:9000
+export SCHEDULER_URL=http://<machine-a-ip>:9001
+export OBJECT_STORE_URL=http://<machine-a-ip>:7001
+export AGENT_ADVERTISE_ADDR=<this-machine-ip>
+
+cd data-plane/compute/ec2-agent
+./target/debug/ec2-agent
+```
+
+Jobs distribute across all agents. The load balancer routes traffic to
+whichever agent hosts each service.
+
+See [tests/distributed/README.md](tests/distributed/README.md) for full setup.
+
+---
+
+## Service port reference
+
+| Service | Port | What it does |
+|---------|------|--------------|
+| Registry | :9000 | Node registry, instance records, IAM keys |
+| Scheduler | :9001 | Job queue, assignment, retry |
+| Controller | :9002 | Workspace cleanup, reconcile loop |
+| SQS | :9003 | Message queue (optional) |
+| SNS | :9004 | Event pub/sub (optional) |
+| Networking | :9005 | VPC/subnet/SG metadata (optional) |
+| Metadata | :9006 | Resource aggregator (optional) |
+| Lambda | :9007 | Function invoke (optional) |
+| API Gateway | :8000 | Single URL for all services (optional) |
+| EC2 Agent | :8080 | Compute agent, runs on every node |
+| Object Store | :7001 | S3-like storage |
+| Load Balancer | :8088 | Routes traffic to deployed services |
+
+---
 
 ## Environment variables
 
-| Variable | Default | Used by |
-|----------|---------|---------|
-| `REGISTRY_URL` | `http://127.0.0.1:9000` | ec2-agent, object-store, scheduler, cli |
-| `SCHEDULER_URL` | `http://127.0.0.1:9001` | ec2-agent, cli |
-| `SCHEDULER_DB` | `scheduler.db` | scheduler |
-| `OBJECT_STORE_URL` | `http://127.0.0.1:7001` | cli |
-| `OBJECT_STORE_ADDR` | `127.0.0.1:7001` | object-store |
-| `STORAGE_ROOT` | `data` | object-store |
-| `METADATA_DB` | `metadata.db` | object-store |
-| `TINYAWS_API_KEY` | (none) | registry, scheduler, object-store, cli (optional bearer auth) |
+See [.env.example](.env.example) for the full list with descriptions.
+Key ones:
 
-## API key auth (optional)
-
-Set the same key on registry, scheduler, object-store, and CLI to require `Authorization: Bearer <key>` on all APIs. Agents can still register, heartbeat, poll jobs, and patch job status without a key.
-
-```powershell
-$env:TINYAWS_API_KEY = "dev-secret"
-# restart registry + scheduler, then CLI picks it up automatically
-```
-
-## Job lifecycle
-
-1. Client submits: `POST /jobs` with `{"command":"echo hello"}` or include `"instance_id":"i-1"`
-2. Scheduler assigns to a healthy compute node (or the instance node if `instance_id` is set)
-3. EC2 agent polls: `GET /jobs?node_id=<id>&status=pending`
-4. Agent marks running: `PATCH /jobs/{id}` with `{"status":"running"}`
-5. Agent runs command locally, reports: `PATCH /jobs/{id}` with `status`, `exit_code`, `stdout`, `stderr`
-6. Client checks: `GET /jobs/{id}`
-
-| Status | Meaning |
-|--------|---------|
-| `pending` | Assigned, waiting for agent |
-| `running` | Agent is executing |
-| `done` | Finished (exit code 0) |
-| `failed` | Command failed, timed out (60s), or retries exhausted (1 retry) |
-
-## Instance lifecycle
-
-Launching an instance records which compute node runs it. Jobs submitted with `--instance i-1` go to that node only. When all instances on a node are terminated, the agent on that node stops accepting new jobs.
-
-```powershell
-$inst = Invoke-RestMethod -Uri "http://127.0.0.1:9000/instances" -Method Post
-$body = @{ command = "echo hello"; instance_id = $inst.id } | ConvertTo-Json
-Invoke-RestMethod -Uri "http://127.0.0.1:9001/jobs" -Method Post -ContentType "application/json" -Body $body
-```
-
-```powershell
-$j = Invoke-RestMethod -Uri "http://127.0.0.1:9001/jobs" -Method Post -ContentType "application/json" -Body '{"command":"echo hello"}'
-Invoke-RestMethod "http://127.0.0.1:9001/jobs/$($j.job_id)"
-```
+| Variable | Default | What it does |
+|----------|---------|--------------|
+| `TINYAWS_API_KEY` | none | Bearer auth on all APIs |
+| `AGENT_ADVERTISE_ADDR` | hostname | IP other services use to reach this agent |
+| `TINYAWS_ISOLATE` | 0 | Set to `1` to run services in `unshare` namespaces |
+| `TINYAWS_ROOTFS_BASE` | `/var/lib/tinyaws/base` | Base rootfs for instances |
+| `JOB_TIMEOUT_SECS` | 3600 | How long a job can run before timeout |
+| `MAX_JOBS_PER_NODE` | 1 | Concurrent jobs per compute node |
+| `REPLICATION_FACTOR` | 1 | Object store replication copies |

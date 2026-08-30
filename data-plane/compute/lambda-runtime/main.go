@@ -9,7 +9,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -152,13 +151,12 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 	codeURL := fmt.Sprintf("%s/buckets/%s/objects/%s", objectStoreURL, fn.Bucket, fn.Key)
 
 	// G7: job command encodes runtime, handler, event via env vars passed as shell prefix
-	cmd := buildInvokeCommand(fn.Runtime, fn.Handler, codeURL, string(event))
+	// prepend env var exports — values quoted with %q, no injection risk from DB-stored handler names
+	envPrefix := fmt.Sprintf("TINYAWS_HANDLER=%q TINYAWS_CODE_URL=%q TINYAWS_EVENT=%q ",
+		fn.Handler, codeURL, string(event))
+	cmd := envPrefix + buildInvokeCommand(fn.Runtime)
 
-	// G7: mark job as lambda type via command prefix
-	seq := atomic.AddUint64(&jobSeq, 1)
-	_ = seq
-
-	payload, _ := json.Marshal(map[string]string{"command": cmd})
+	payload, _ := json.Marshal(map[string]any{"command": cmd})
 	resp, err := http.Post(schedulerURL+"/jobs", "application/json", bytes.NewReader(payload))
 	if err != nil {
 		http.Error(w, "scheduler error", http.StatusInternalServerError)
@@ -177,44 +175,33 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
-// buildInvokeCommand builds the shell command for a lambda invocation.
-func buildInvokeCommand(runtime, handler, codeURL, event string) string {
-	// ponytail: inline shell command; add proper sandbox when security matters
+// buildInvokeCommand returns a fixed shell template that reads handler/code/event
+// from env vars — no interpolation, no injection risk.
+func buildInvokeCommand(runtime string) string {
 	switch runtime {
 	case "python3":
-		return fmt.Sprintf(
-			`python3 -c "import urllib.request,zipfile,os,json,importlib,sys; `+
-				`d='/tmp/tinyaws-lambda'; os.makedirs(d,exist_ok=True); `+
-				`urllib.request.urlretrieve('%s',d+'/fn.zip'); `+
-				`zipfile.ZipFile(d+'/fn.zip').extractall(d); `+
-				`sys.path.insert(0,d); mod,fn=('%s').rsplit('.',1); `+
-				`m=importlib.import_module(mod); `+
-				`r=m.__dict__[fn](%s); print(json.dumps(r))"`,
-			codeURL, handler, jsonOrNull(event),
-		)
+		return `python3 -c "` +
+			`import urllib.request,zipfile,os,json,importlib,sys; ` +
+			`d='/tmp/tinyaws-lambda'; os.makedirs(d,exist_ok=True); ` +
+			`urllib.request.urlretrieve(os.environ['TINYAWS_CODE_URL'],d+'/fn.zip'); ` +
+			`zipfile.ZipFile(d+'/fn.zip').extractall(d); ` +
+			`sys.path.insert(0,d); mod,fn=os.environ['TINYAWS_HANDLER'].rsplit('.',1); ` +
+			`m=importlib.import_module(mod); ` +
+			`ev=json.loads(os.environ.get('TINYAWS_EVENT','null')); ` +
+			`r=m.__dict__[fn](ev); print(json.dumps(r))"`
 	case "node20":
-		return fmt.Sprintf(
-			`node -e "const https=require('https'),fs=require('fs'),path=require('path'),`+
-				`{execSync}=require('child_process'); `+
-				`const d='/tmp/tinyaws-lambda'; fs.mkdirSync(d,{recursive:true}); `+
-				`execSync('curl -s -o '+d+'/fn.zip %s'); `+
-				`execSync('cd '+d+' && unzip -o fn.zip'); `+
-				`const [m,f]='%s'.split('.'); `+
-				`const mod=require(path.join(d,m)); `+
-				`Promise.resolve(mod[f](%s)).then(r=>console.log(JSON.stringify(r)))"`,
-			codeURL, handler, jsonOrNull(event),
-		)
+		return `node -e "` +
+			`const fs=require('fs'),path=require('path'),{execSync}=require('child_process'); ` +
+			`const d='/tmp/tinyaws-lambda'; fs.mkdirSync(d,{recursive:true}); ` +
+			`execSync('curl -s -o '+d+'/fn.zip '+process.env.TINYAWS_CODE_URL); ` +
+			`execSync('cd '+d+' && unzip -o fn.zip'); ` +
+			`const [m,f]=process.env.TINYAWS_HANDLER.split('.'); ` +
+			`const mod=require(path.join(d,m)); ` +
+			`const ev=JSON.parse(process.env.TINYAWS_EVENT||'null'); ` +
+			`Promise.resolve(mod[f](ev)).then(r=>console.log(JSON.stringify(r)))"`
 	default:
-		return fmt.Sprintf("echo 'unsupported runtime: %s'", runtime)
+		return `echo unsupported-runtime`
 	}
-}
-
-// jsonOrNull returns the event JSON or "null".
-func jsonOrNull(event string) string {
-	if event == "" {
-		return "null"
-	}
-	return "'" + event + "'"
 }
 
 // pollJobResult waits up to 60s for job completion.

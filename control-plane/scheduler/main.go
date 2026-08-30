@@ -358,7 +358,14 @@ func updateJob(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func fetchComputeNodes(registryURL string) ([]Node, error) {
-	resp, err := http.Get(registryURL + "/nodes?role=compute")
+	req, err := http.NewRequest(http.MethodGet, registryURL+"/nodes?role=compute", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request")
+	}
+	if key := os.Getenv("TINYAWS_API_KEY"); key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to reach registry")
 	}
@@ -382,7 +389,14 @@ func fetchComputeNodes(registryURL string) ([]Node, error) {
 }
 
 func pickNodeForInstance(registryURL, instanceID string) (*Node, error) {
-	resp, err := http.Get(registryURL + "/instances/" + instanceID)
+	req, err := http.NewRequest(http.MethodGet, registryURL+"/instances/"+instanceID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request")
+	}
+	if key := os.Getenv("TINYAWS_API_KEY"); key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to reach registry")
 	}

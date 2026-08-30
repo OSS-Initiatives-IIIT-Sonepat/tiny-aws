@@ -333,6 +333,7 @@ async fn register_service(
 // ponytail: full-read-and-PUT every 30s; upgrade to append-only streaming if log files get large
 fn start_log_upload(svc_id: String, log_path: std::path::PathBuf, done_flag: Arc<std::sync::atomic::AtomicBool>) {
     let store_url = crate::config::object_store_url();
+    let api_key = std::env::var("TINYAWS_API_KEY").unwrap_or_default();
     tokio::spawn(async move {
         let client = reqwest::Client::new();
         let mut ticker = interval(Duration::from_secs(30));
@@ -341,10 +342,13 @@ fn start_log_upload(svc_id: String, log_path: std::path::PathBuf, done_flag: Arc
         loop {
             ticker.tick().await;
             if let Ok(data) = std::fs::read(&log_path) {
-                let _ = client.put(&url)
+                let mut req = client.put(&url)
                     .header("content-type", "text/plain")
-                    .body(data)
-                    .send().await;
+                    .body(data);
+                if !api_key.is_empty() {
+                    req = req.header("authorization", format!("Bearer {}", api_key));
+                }
+                let _ = req.send().await;
             }
             if done_flag.load(std::sync::atomic::Ordering::Relaxed) {
                 break;

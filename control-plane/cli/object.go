@@ -99,7 +99,7 @@ func runObjectPut(args []string) {
 		os.Exit(1)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpDo(req)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -123,7 +123,7 @@ func runObjectPut(args []string) {
 func runObjectGet(args []string) {
 	parsed := parseObjectArgs(args, false)
 
-	resp, err := http.Get(objectURL(parsed.bucket, parsed.key))
+	resp, err := httpGet(objectURL(parsed.bucket, parsed.key))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)

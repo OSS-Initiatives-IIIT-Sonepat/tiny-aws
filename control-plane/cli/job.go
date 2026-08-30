@@ -66,7 +66,7 @@ func runJobSubmit(args []string) {
 	}
 	b, _ := json.Marshal(payload)
 
-	resp, err := http.Post(schedulerURL()+"/jobs", "application/json", bytes.NewReader(b))
+	resp, err := httpPost(schedulerURL()+"/jobs", "application/json", bytes.NewReader(b))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -118,7 +118,7 @@ func runJobStatus(args []string) {
 // GET /jobs/{id} once.
 func fetchJob(jobID string) (*jobRecord, error) {
 	url := schedulerURL() + "/jobs/" + jobID
-	resp, err := http.Get(url)
+	resp, err := httpGet(url)
 	if err != nil {
 		return nil, err
 	}

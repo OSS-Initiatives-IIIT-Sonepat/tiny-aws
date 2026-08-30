@@ -42,7 +42,7 @@ func runBucketCreate(args []string) {
 		os.Exit(1)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpDo(req)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -60,7 +60,7 @@ func runBucketCreate(args []string) {
 
 // GET /buckets - list all buckets.
 func runBucketList() {
-	resp, err := http.Get(objectStoreURL() + "/buckets")
+	resp, err := httpGet(objectStoreURL() + "/buckets")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)

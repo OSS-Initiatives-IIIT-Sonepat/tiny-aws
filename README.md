@@ -159,6 +159,16 @@ curl.exe http://127.0.0.1:7001/buckets
 | `OBJECT_STORE_ADDR` | `127.0.0.1:7001` | object-store |
 | `STORAGE_ROOT` | `data` | object-store |
 | `METADATA_DB` | `metadata.db` | object-store |
+| `TINYAWS_API_KEY` | (none) | registry, scheduler, cli (optional bearer auth) |
+
+## API key auth (optional)
+
+Set the same key on registry, scheduler, and CLI to require `Authorization: Bearer <key>` on client APIs. Agents can still register, heartbeat, poll jobs, and patch job status without a key.
+
+```powershell
+$env:TINYAWS_API_KEY = "dev-secret"
+# restart registry + scheduler, then CLI picks it up automatically
+```
 
 ## Job lifecycle
 
@@ -174,7 +184,7 @@ curl.exe http://127.0.0.1:7001/buckets
 | `pending` | Assigned, waiting for agent |
 | `running` | Agent is executing |
 | `done` | Finished (exit code 0) |
-| `failed` | Command failed or timed out (60s) |
+| `failed` | Command failed, timed out (60s), or retries exhausted (1 retry) |
 
 ## Instance lifecycle
 

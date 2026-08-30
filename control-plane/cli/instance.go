@@ -34,7 +34,7 @@ func runInstance(args []string) {
 
 // POST /instances — launch a fake EC2 instance.
 func runInstanceLaunch() {
-	resp, err := http.Post(registryURL()+"/instances", "application/json", nil)
+	resp, err := httpPost(registryURL()+"/instances", "application/json", nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -52,7 +52,7 @@ func runInstanceLaunch() {
 
 // GET /instances — list all instances.
 func runInstanceList() {
-	resp, err := http.Get(registryURL() + "/instances")
+	resp, err := httpGet(registryURL() + "/instances")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -88,7 +88,7 @@ func runInstanceTerminate(id string) {
 		os.Exit(1)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpDo(req)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)

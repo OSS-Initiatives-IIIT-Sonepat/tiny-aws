@@ -63,7 +63,7 @@ func fetchNodes(role string) ([]nodeRecord, error) {
 		url += "?role=" + role
 	}
 
-	resp, err := http.Get(url)
+	resp, err := httpGet(url)
 	if err != nil {
 		return nil, err
 	}

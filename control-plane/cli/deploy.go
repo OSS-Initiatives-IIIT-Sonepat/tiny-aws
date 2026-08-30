@@ -135,7 +135,7 @@ func zipDirectory(src string) (string, error) {
 
 func ensureBucket(name string) {
 	req, _ := http.NewRequest(http.MethodPut, objectStoreURL()+"/buckets/"+name, nil)
-	resp, _ := http.DefaultClient.Do(req)
+	resp, _ := httpDo(req)
 	if resp != nil {
 		resp.Body.Close()
 	}
@@ -148,7 +148,7 @@ func uploadObject(bucket, key string, data []byte) {
 		os.Exit(1)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpDo(req)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "upload failed: %v\n", err)
 		os.Exit(1)
@@ -169,7 +169,7 @@ func submitJobCommand(command, instanceID string) string {
 	}
 	b, _ := json.Marshal(payload)
 
-	resp, err := http.Post(schedulerURL()+"/jobs", "application/json", bytes.NewReader(b))
+	resp, err := httpPost(schedulerURL()+"/jobs", "application/json", bytes.NewReader(b))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "submit failed: %v\n", err)
 		os.Exit(1)

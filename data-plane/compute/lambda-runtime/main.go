@@ -31,10 +31,7 @@ type InvokeResult struct {
 	Error      string `json:"error,omitempty"`
 }
 
-var (
-	db      *sql.DB
-	jobSeq  uint64
-)
+var db *sql.DB
 
 func main() {
 	dbPath := getenv("LAMBDA_DB", "lambda.db")

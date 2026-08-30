@@ -13,8 +13,7 @@ build/
 *.rlib
 *.rmeta
 
-# Cargo lock file (usually not committed for libraries)
-# Cargo.lock
+# Cargo lock — committed for binary crates (reproducible builds)
 
 # Environment files
 .env
@@ -59,8 +58,8 @@ Thumbs.db
 .DS_Store
 ehthumbs.db
 
-# Rust
-Cargo.lock
+# Rust — commit Cargo.lock for binary crates (reproducible builds)
+# Library crates should still ignore it; we track per-crate below
 .cargo/
 
 # Storage runtime artifacts

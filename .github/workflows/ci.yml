@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build registry
+        run: go build ./...
+        working-directory: control-plane/registry
+
+      - name: Build scheduler
+        run: go build ./...
+        working-directory: control-plane/scheduler
+
+      - name: Build CLI
+        run: go build ./...
+        working-directory: control-plane/cli
+
+      - name: Build ec2-agent
+        run: cargo build
+        working-directory: data-plane/compute/ec2-agent
+
+      - name: Build object-store
+        run: cargo build
+        working-directory: data-plane/storage/object-store
+
+      - name: Start stack
+        shell: pwsh
+        run: |
+          Start-Process go -ArgumentList "run","." -WorkingDirectory "$env:GITHUB_WORKSPACE/control-plane/registry"
+          Start-Sleep -Seconds 3
+          Start-Process cargo -ArgumentList "run" -WorkingDirectory "$env:GITHUB_WORKSPACE/data-plane/compute/ec2-agent"
+          Start-Sleep -Seconds 5
+          Start-Process cargo -ArgumentList "run" -WorkingDirectory "$env:GITHUB_WORKSPACE/data-plane/storage/object-store"
+          Start-Sleep -Seconds 8
+          Start-Process go -ArgumentList "run","." -WorkingDirectory "$env:GITHUB_WORKSPACE/control-plane/scheduler"
+          Start-Sleep -Seconds 3
+
+      - name: Smoke test
+        shell: pwsh
+        run: ./tests/integration/smoke-test.ps1

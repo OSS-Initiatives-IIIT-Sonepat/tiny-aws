@@ -48,6 +48,20 @@ fn workspace_path(instance_id: &str) -> PathBuf {
 
 // Polls scheduler for jobs; skips polling if all instances on this node are terminated.
 pub fn start_job_worker(node_id: String, scheduler_url: String, registry_url: String) {
+    // svc_id -> pid; shared between job worker (writer) and kill-poller (reader)
+    // ponytail: HashMap under Mutex; fine for single-agent low-service-count use
+    let service_pids: Arc<Mutex<HashMap<String, u32>>> = Arc::new(Mutex::new(HashMap::new()));
+
+    // J4: background task that polls registry for stopped services and kills their PIDs
+    {
+        let pids = service_pids.clone();
+        let reg = registry_url.clone();
+        let nid = node_id.clone();
+        tokio::spawn(async move {
+            kill_stopped_services(pids, reg, nid).await;
+        });
+    }
+
     tokio::spawn(async move {
         let client = reqwest::Client::new();
         let mut ticker = interval(Duration::from_secs(3));
@@ -113,8 +127,9 @@ pub fn start_job_worker(node_id: String, scheduler_url: String, registry_url: St
                 let node_id2 = node_id.clone();
                 let job2 = job.clone();
                 let ws = workspace.clone();
+                let pids2 = service_pids.clone();
                 tokio::spawn(async move {
-                    run_service(client2, scheduler_url2, registry_url2, node_id2, job2, ws).await;
+                    run_service(client2, scheduler_url2, registry_url2, node_id2, job2, ws, pids2).await;
                 });
                 continue;
             }
@@ -146,6 +161,7 @@ async fn run_service(
     node_id: String,
     job: Job,
     workspace: Option<PathBuf>,
+    service_pids: Arc<Mutex<HashMap<String, u32>>>,
 ) {
     // determine the deploy dir — download and extract zip if deploy_url set
     let run_dir = if !job.deploy_url.is_empty() {
@@ -219,6 +235,13 @@ async fn run_service(
     // register with registry so the LB and CLI can find it
     let svc_id = register_service(&client, &registry_url, &node_id, &job, pid).await;
 
+    // J4: track svc_id -> pid so kill-poller can send SIGTERM
+    if let Some(ref id) = svc_id {
+        if let Ok(mut map) = service_pids.lock() {
+            map.insert(id.clone(), child.id());
+        }
+    }
+
     // monitor: wait for process to exit, then update registry
     // ponytail: blocking wait in spawn_blocking; upgrade to tokio::process if needed
     let mut child = child;
@@ -232,6 +255,13 @@ async fn run_service(
 
     let final_status = if exit_code == 0 { "done" } else { "crashed" };
     println!("service {} exited exit_code={} status={}", job.job_id, exit_code, final_status);
+
+    // remove from kill-poller map — already exited
+    if let Some(ref id) = svc_id {
+        if let Ok(mut map) = service_pids.lock() {
+            map.remove(id);
+        }
+    }
 
     // update registry service record
     if let Some(ref id) = svc_id {
@@ -331,6 +361,46 @@ async fn run_deploy(
     let run_cmd = format!("sh '{}'", start_script.to_string_lossy());
 
     run_command_in(&run_cmd, Some(&deploy_dir)).await
+}
+
+// J4: polls registry every 10s for stopped services on this node and SIGTERMs them.
+async fn kill_stopped_services(
+    service_pids: Arc<Mutex<HashMap<String, u32>>>,
+    registry_url: String,
+    node_id: String,
+) {
+    let client = reqwest::Client::new();
+    let mut ticker = interval(Duration::from_secs(10));
+    loop {
+        ticker.tick().await;
+        let url = format!("{}/services?node_id={}&status=stopped", registry_url, node_id);
+        let svcs: Vec<serde_json::Value> = match client.get(&url).send().await {
+            Ok(r) => r.json().await.unwrap_or_default(),
+            Err(_) => continue,
+        };
+        for svc in svcs {
+            let id = svc["id"].as_str().unwrap_or("").to_string();
+            if id.is_empty() { continue; }
+            let pid = match service_pids.lock().ok().and_then(|m| m.get(&id).copied()) {
+                Some(p) => p,
+                None => continue,
+            };
+            #[cfg(unix)]
+            {
+                // SIGTERM to the process group
+                unsafe { libc::kill(-(pid as i32), libc::SIGTERM); }
+                println!("kill_stopped_services: sent SIGTERM to pgid {} (svc {})", pid, id);
+            }
+            #[cfg(windows)]
+            {
+                // best-effort on Windows — taskkill the PID tree
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/PID", &pid.to_string(), "/T", "/F"])
+                    .status();
+            }
+            if let Ok(mut map) = service_pids.lock() { map.remove(&id); }
+        }
+    }
 }
 
 // B1: for each running instance ensure workspace dir exists; drops terminated ones.

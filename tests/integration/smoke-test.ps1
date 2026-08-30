@@ -61,7 +61,15 @@ Write-Host "  object meta ok"
 
 Write-Host ""
 Write-Host "[4/10] Scheduler"
-Test-Endpoint "schedule" "http://127.0.0.1:9001/schedule" '"node_id"'
+# retry /schedule — agent may still be registering on first startup
+$schedOk = $false
+for ($i = 0; $i -lt 10; $i++) {
+    $resp = curl.exe -s @curlAuth "http://127.0.0.1:9001/schedule" 2>$null
+    if ($resp -match '"node_id"') { $schedOk = $true; break }
+    Start-Sleep -Seconds 2
+}
+if (-not $schedOk) { throw "schedule: no healthy compute nodes after 20s" }
+Write-Host "  schedule ok"
 
 Write-Host ""
 Write-Host "[5/10] Job submission"

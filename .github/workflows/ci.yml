@@ -80,13 +80,13 @@ jobs:
           TINYAWS_API_KEY: ci-smoke-key
         run: |
           Start-Process go -ArgumentList "run","." -WorkingDirectory "$env:GITHUB_WORKSPACE/control-plane/registry"
-          Start-Sleep -Seconds 3
+          Start-Sleep -Seconds 5
           Start-Process -FilePath "$env:GITHUB_WORKSPACE/data-plane/compute/ec2-agent/target/debug/ec2-agent.exe"
-          Start-Sleep -Seconds 3
-          Start-Process -FilePath "$env:GITHUB_WORKSPACE/data-plane/storage/object-store/target/debug/object-store.exe"
           Start-Sleep -Seconds 8
+          Start-Process -FilePath "$env:GITHUB_WORKSPACE/data-plane/storage/object-store/target/debug/object-store.exe"
+          Start-Sleep -Seconds 10
           Start-Process go -ArgumentList "run","." -WorkingDirectory "$env:GITHUB_WORKSPACE/control-plane/scheduler"
-          Start-Sleep -Seconds 3
+          Start-Sleep -Seconds 5
 
       - name: Smoke test
         shell: pwsh

@@ -31,6 +31,7 @@ func main() {
 	store = NewNodeStore("registry.db")
 	instanceStore = NewInstanceStore(store.DB())
 	iamDB = store.DB()
+	serviceStore = NewServiceStore(store.DB())
 
 	loaded, err := store.LoadAll()
 	if err != nil {
@@ -57,6 +58,11 @@ func main() {
 	http.HandleFunc("POST /iam/keys", authMiddleware(handleIAMKeyCreate))
 	http.HandleFunc("DELETE /iam/keys/{key}", authMiddleware(handleIAMKeyDelete))
 	http.HandleFunc("GET /iam/keys", authMiddleware(handleIAMKeyList))
+	http.HandleFunc("POST /services", authMiddleware(handleServiceCreate))
+	http.HandleFunc("GET /services", authMiddleware(handleServiceList))
+	http.HandleFunc("GET /services/{id}", authMiddleware(handleServiceGet))
+	http.HandleFunc("PATCH /services/{id}", authMiddleware(handleServicePatch))
+	http.HandleFunc("DELETE /services/{id}", authMiddleware(handleServiceDelete))
 
 	go checkNodesHealth()
 

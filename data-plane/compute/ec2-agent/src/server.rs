@@ -4,9 +4,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 pub async fn start(node: &Node) -> Result<(), Box<dyn std::error::Error>> {
-    let listener = TcpListener::bind("127.0.0.1:8080").await?;
+    let addr = std::env::var("AGENT_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".into());
+    let listener = TcpListener::bind(&addr).await?;
 
-    println!("ec2-agent listening on 127.0.0.1:8080");
+    println!("ec2-agent listening on {}", addr);
 
     loop {
         let (mut socket, address) = listener.accept().await?;

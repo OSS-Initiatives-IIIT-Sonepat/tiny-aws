@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     heartbeat::start_heartbeat(node.id.clone(), &registry_url);
 
     // Background task: poll scheduler for jobs and run them
-    jobs::start_job_worker(node.id.clone(), scheduler_url);
+    jobs::start_job_worker(node.id.clone(), scheduler_url, registry_url.clone());
 
     let ctrl_c = signal::ctrl_c();
 

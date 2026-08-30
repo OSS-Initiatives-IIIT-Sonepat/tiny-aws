@@ -48,6 +48,7 @@ func main() {
 	http.HandleFunc("GET /nodes", handleNodes)
 	http.HandleFunc("POST /nodes/register", handleRegister)
 	http.HandleFunc("POST /nodes/heartbeat", handleHeartbeat)
+	http.HandleFunc("DELETE /nodes/{id}", handleNodeByID)
 	http.HandleFunc("GET /instances", handleInstances)
 	http.HandleFunc("POST /instances", handleInstances)
 	http.HandleFunc("GET /instances/{id}", handleInstanceGet)
@@ -186,6 +187,36 @@ func handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "node not found", http.StatusNotFound)
 }
 
+func handleNodeByID(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "node id required", http.StatusBadRequest)
+		return
+	}
+
+	nodesMu.Lock()
+	defer nodesMu.Unlock()
+
+	if _, exists := nodes[id]; !exists {
+		http.Error(w, "node not found", http.StatusNotFound)
+		return
+	}
+
+	delete(nodes, id)
+	if err := store.Delete(id); err != nil {
+		http.Error(w, "delete failed", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("DELETE /nodes/%s - removed", id)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func checkNodesHealth() {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
@@ -195,7 +226,19 @@ func checkNodesHealth() {
 
 		nodesMu.Lock()
 		for id, node := range nodes {
-			if now.Sub(node.LastSeen) > 30*time.Second {
+			age := now.Sub(node.LastSeen)
+
+			if age > 5*time.Minute && node.Status == "unhealthy" {
+				delete(nodes, id)
+				if err := store.Delete(id); err != nil {
+					log.Printf("failed to delete stale node %s: %v", id, err)
+				} else {
+					log.Printf("pruned stale node %s", id)
+				}
+				continue
+			}
+
+			if age > 30*time.Second {
 				if node.Status == "healthy" {
 					log.Printf("node %s became unhealthy", id)
 				}

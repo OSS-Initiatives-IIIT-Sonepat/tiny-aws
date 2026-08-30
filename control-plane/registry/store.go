@@ -40,6 +40,11 @@ func (s *NodeStore) DB() *sql.DB {
 	return s.db
 }
 
+func (s *NodeStore) Delete(id string) error {
+	_, err := s.db.Exec(`DELETE FROM nodes WHERE id = ?`, id)
+	return err
+}
+
 func (s *NodeStore) Save(node Node) error {
 	_, err := s.db.Exec(
 		`INSERT INTO nodes (id, hostname, cpu_count, role, status, last_seen)

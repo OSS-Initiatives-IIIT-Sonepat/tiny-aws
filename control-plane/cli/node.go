@@ -20,13 +20,25 @@ type nodeRecord struct {
 // Handles: tinyaws node list [--role compute|storage].
 func runNode(args []string) {
 	if len(args) < 1 || args[0] != "list" {
-		fmt.Println("usage: tinyaws node list [--role compute|storage]")
+		fmt.Println("usage: tinyaws node list [--role compute|storage] [--healthy-only]")
 		os.Exit(1)
 	}
 
 	role := ""
-	if len(args) >= 3 && args[1] == "--role" {
-		role = args[2]
+	healthyOnly := false
+
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--role":
+			if i+1 >= len(args) {
+				fmt.Println("--role requires a value")
+				os.Exit(1)
+			}
+			role = args[i+1]
+			i++
+		case "--healthy-only":
+			healthyOnly = true
+		}
 	}
 
 	nodes, err := fetchNodes(role)
@@ -36,6 +48,9 @@ func runNode(args []string) {
 	}
 
 	for _, n := range nodes {
+		if healthyOnly && n.Status != "healthy" {
+			continue
+		}
 		fmt.Printf("%-20s role=%-8s status=%-10s hostname=%s cpus=%d\n",
 			n.ID, n.Role, n.Status, n.Hostname, n.CPUCount)
 	}

@@ -556,8 +556,8 @@ async fn run_command_in(command: &str, workdir: Option<&Path>, nspawn_prefix: Op
 
     // B4: Unix — new process group so kill(-pgid) cleans up children
     #[cfg(unix)]
+    // pre_exec is from std::os::unix::process::CommandExt, auto-imported in edition 2024
     unsafe {
-        use std::os::unix::process::CommandExt;
         cmd.pre_exec(|| { libc::setpgid(0, 0); Ok(()) });
     }
 

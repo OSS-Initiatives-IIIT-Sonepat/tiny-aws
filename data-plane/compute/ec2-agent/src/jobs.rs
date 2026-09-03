@@ -18,6 +18,8 @@ struct Job {
     job_type: String, // "run" (default) | "service"
     #[serde(default)]
     port: u16,
+    #[serde(default)]
+    env_vars: HashMap<String, String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -142,11 +144,18 @@ pub fn start_job_worker(node_id: String, scheduler_url: String, registry_url: St
                 None
             };
 
+            // Set up cgroup resource limits for sandboxed jobs
+            // ponytail: default 512MB / 100% CPU; override via instance spec when running in nspawn
+            let _cgroup = crate::sandbox::setup_cgroup(&job.job_id, 512, 100);
+
             let (exit_code, stdout, stderr) = if !job.deploy_url.is_empty() {
                 run_deploy(&client, &job.deploy_url, workspace.as_deref()).await
             } else {
-                run_command_in(&job.command, workspace.as_deref(), nspawn_prefix.as_deref()).await
+                run_command_in(&job.command, workspace.as_deref(), nspawn_prefix.as_deref(), &job.env_vars).await
             };
+
+            crate::sandbox::cleanup_cgroup(&job.job_id);
+
             let status = if exit_code == 0 { "done" } else { "failed" };
 
             if let Err(e) = report_result(
@@ -214,23 +223,31 @@ async fn run_service(
         .unwrap_or_else(|_| std::fs::File::create(&log_path).unwrap());
     let log_clone = log_file.try_clone().unwrap_or_else(|_| std::fs::File::create(&log_path).unwrap());
 
-    // K1: on Linux, wrap with unshare for pid+mount namespace isolation when TINYAWS_ISOLATE=1
-    // ponytail: requires root (or user namespaces enabled); off by default; upgrade to rootless with newuidmap if needed
-    #[cfg(unix)]
-    let (prog, args) = if std::env::var("TINYAWS_ISOLATE").as_deref() == Ok("1") {
-        let mut wrapped = vec!["--pid", "--mount", "--fork", "--"];
-        wrapped.push(prog);
-        wrapped.extend_from_slice(&args);
-        ("unshare", wrapped)
-    } else {
-        (prog, args)
-    };
+    // Set up cgroup resource limits for this service
+    // ponytail: default 1GB / 200% CPU for services; override via instance spec when nspawn
+    let _cgroup = crate::sandbox::setup_cgroup(&job.job_id, 1024, 200);
 
-    let mut cmd = std::process::Command::new(prog);
+    // K1: on Linux, wrap with unshare for pid+mount+ipc namespace isolation (on by default)
+    // ponytail: disable with TINYAWS_SANDBOX=0; requires root (or user namespaces enabled)
+    #[cfg(unix)]
+    let (prog, args): (String, Vec<String>) = if crate::sandbox::enabled() {
+        crate::sandbox::wrap_command(prog, &args)
+    } else {
+        (prog.into(), args.into_iter().map(|s| s.to_string()).collect())
+    };
+    #[cfg(not(unix))]
+    let (prog, args): (String, Vec<String>) = (prog.into(), args.into_iter().map(|s| s.to_string()).collect());
+
+    let mut cmd = std::process::Command::new(&prog);
     cmd.args(&args)
         .current_dir(&run_dir)
         .stdout(log_file)
         .stderr(log_clone);
+
+    // inject user-defined environment variables
+    for (k, v) in &job.env_vars {
+        cmd.env(k, v);
+    }
 
     // Unix: new process group so we can kill the whole tree
     #[cfg(unix)]
@@ -278,6 +295,9 @@ async fn run_service(
 
     // signal log uploader to stop and do one final upload
     log_done.store(true, std::sync::atomic::Ordering::Relaxed);
+
+    // clean up cgroup
+    crate::sandbox::cleanup_cgroup(&job.job_id);
 
     let final_status = if exit_code == 0 { "done" } else { "crashed" };
     println!("service {} exited exit_code={} status={}", job.job_id, exit_code, final_status);
@@ -377,7 +397,7 @@ async fn download_and_extract(client: &reqwest::Client, deploy_url: &str, dir: &
     #[cfg(not(windows))]
     let extract_cmd = format!("unzip -o '{}' -d '{}'", zip_path.to_string_lossy(), dir.to_string_lossy());
 
-    let (code, _, err) = run_command_in(&extract_cmd, None, None).await;
+    let (code, _, err) = run_command_in(&extract_cmd, None, None, &HashMap::new()).await;
     if code != 0 {
         return Err(format!("extract failed: {}", err));
     }
@@ -412,7 +432,7 @@ async fn run_deploy(
     #[cfg(not(windows))]
     let run_cmd = format!("sh '{}'", start_script.to_string_lossy());
 
-    run_command_in(&run_cmd, Some(&deploy_dir), None).await
+    run_command_in(&run_cmd, Some(&deploy_dir), None, &HashMap::new()).await
 }
 
 // J4: polls registry every 10s for stopped services on this node and SIGTERMs them.
@@ -530,7 +550,7 @@ async fn report_result(
 // B4: on Unix spawns in a new process group for isolation.
 // nspawn_prefix: when Some, prepends systemd-nspawn args to run inside a container (Linux only).
 #[allow(unused_variables)]
-async fn run_command_in(command: &str, workdir: Option<&Path>, nspawn_prefix: Option<&[String]>) -> (i32, String, String) {
+async fn run_command_in(command: &str, workdir: Option<&Path>, nspawn_prefix: Option<&[String]>, env_vars: &HashMap<String, String>) -> (i32, String, String) {
     #[cfg(windows)]
     let mut cmd = {
         let mut c = Command::new("cmd");
@@ -544,6 +564,12 @@ async fn run_command_in(command: &str, workdir: Option<&Path>, nspawn_prefix: Op
         for arg in &prefix[1..] { c.arg(arg); }
         c.args(["sh", "-c", command]);
         c
+    } else if crate::sandbox::enabled() {
+        // sandbox: wrap with unshare for PID + mount isolation
+        let (prog, args) = crate::sandbox::wrap_command("sh", &["-c", command]);
+        let mut c = Command::new(&prog);
+        for arg in &args { c.arg(arg); }
+        c
     } else {
         let mut c = Command::new("sh");
         c.args(["-c", command]);
@@ -552,6 +578,11 @@ async fn run_command_in(command: &str, workdir: Option<&Path>, nspawn_prefix: Op
 
     if let Some(dir) = workdir {
         cmd.current_dir(dir);
+    }
+
+    // inject user-defined environment variables
+    for (k, v) in env_vars {
+        cmd.env(k, v);
     }
 
     // B4: Unix — new process group so kill(-pgid) cleans up children

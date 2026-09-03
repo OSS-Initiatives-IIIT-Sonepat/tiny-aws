@@ -18,13 +18,15 @@ Usage:
   tinyaws instance launch
   tinyaws instance list
   tinyaws instance terminate <id>
+  tinyaws instance shell <id>
+  tinyaws exec <instance-id> -- <command>
 
   tinyaws bucket create <name>
   tinyaws bucket list
   tinyaws object put <key> --bucket <name> [--data text] [--file path]
   tinyaws object get <key> --bucket <name>
 
-  tinyaws deploy <dir> [--instance i-1] [--wait] [--service] [--port N]
+  tinyaws deploy <dir> [--instance i-1] [--wait] [--service] [--port N] [--env KEY=VAL]...
 
   tinyaws auth set-key <key> [--role admin|readonly]
   tinyaws auth whoami
@@ -56,6 +58,8 @@ func main() {
 		runJob(os.Args[2:])
 	case "instance":
 		runInstance(os.Args[2:])
+	case "exec":
+		runExec(os.Args[2:])
 	case "bucket":
 		runBucket(os.Args[2:])
 	case "deploy":

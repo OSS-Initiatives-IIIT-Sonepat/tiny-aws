@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"log"
 	"strconv"
 	"strings"
@@ -31,6 +32,7 @@ func NewJobStore(path string) *JobStore {
 			deploy_url  TEXT NOT NULL DEFAULT '',
 			job_type    TEXT NOT NULL DEFAULT 'run',
 			port        INTEGER NOT NULL DEFAULT 0,
+			env_vars    TEXT NOT NULL DEFAULT '{}',
 			status      TEXT NOT NULL,
 			exit_code   INTEGER,
 			stdout      TEXT NOT NULL DEFAULT '',
@@ -51,6 +53,7 @@ func NewJobStore(path string) *JobStore {
 	_, _ = db.Exec(`ALTER TABLE jobs ADD COLUMN running_at TEXT`)
 	_, _ = db.Exec(`ALTER TABLE jobs ADD COLUMN job_type TEXT NOT NULL DEFAULT 'run'`)
 	_, _ = db.Exec(`ALTER TABLE jobs ADD COLUMN port INTEGER NOT NULL DEFAULT 0`)
+	_, _ = db.Exec(`ALTER TABLE jobs ADD COLUMN env_vars TEXT NOT NULL DEFAULT '{}'`)
 
 	return &JobStore{db: db}
 }
@@ -72,9 +75,16 @@ func (s *JobStore) Save(job Job) error {
 		finishedAt = job.FinishedAt.Format(time.RFC3339)
 	}
 
+	envJSON := "{}"
+	if job.EnvVars != nil {
+		if b, err := json.Marshal(job.EnvVars); err == nil {
+			envJSON = string(b)
+		}
+	}
+
 	_, err := s.db.Exec(
-		`INSERT INTO jobs (id, node_id, instance_id, command, deploy_url, job_type, port, status, retry_count, exit_code, stdout, stderr, created_at, running_at, finished_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO jobs (id, node_id, instance_id, command, deploy_url, job_type, port, env_vars, status, retry_count, exit_code, stdout, stderr, created_at, running_at, finished_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   node_id = excluded.node_id,
 		   instance_id = excluded.instance_id,
@@ -82,6 +92,7 @@ func (s *JobStore) Save(job Job) error {
 		   deploy_url = excluded.deploy_url,
 		   job_type = excluded.job_type,
 		   port = excluded.port,
+		   env_vars = excluded.env_vars,
 		   status = excluded.status,
 		   retry_count = excluded.retry_count,
 		   exit_code = excluded.exit_code,
@@ -91,7 +102,7 @@ func (s *JobStore) Save(job Job) error {
 		   running_at = excluded.running_at,
 		   finished_at = excluded.finished_at`,
 		job.ID, job.NodeID, job.InstanceID, job.Command, job.DeployURL,
-		job.JobType, job.Port, job.Status, job.RetryCount, exitCode,
+		job.JobType, job.Port, envJSON, job.Status, job.RetryCount, exitCode,
 		job.Stdout, job.Stderr, job.CreatedAt.Format(time.RFC3339), runningAt, finishedAt,
 	)
 	return err
@@ -100,7 +111,7 @@ func (s *JobStore) Save(job Job) error {
 // Loads all jobs from DB and returns the highest job-N sequence number.
 func (s *JobStore) LoadAll() (map[string]Job, uint64, error) {
 	rows, err := s.db.Query(`
-		SELECT id, node_id, instance_id, command, deploy_url, job_type, port, status, retry_count, exit_code, stdout, stderr, created_at, running_at, finished_at
+		SELECT id, node_id, instance_id, command, deploy_url, job_type, port, env_vars, status, retry_count, exit_code, stdout, stderr, created_at, running_at, finished_at
 		FROM jobs`)
 	if err != nil {
 		return nil, 0, err
@@ -116,13 +127,18 @@ func (s *JobStore) LoadAll() (map[string]Job, uint64, error) {
 		var runningAt sql.NullString
 		var finished sql.NullString
 		var exitCode sql.NullInt64
+		var envJSON string
 
 		if err := rows.Scan(
 			&job.ID, &job.NodeID, &job.InstanceID, &job.Command, &job.DeployURL,
-			&job.JobType, &job.Port, &job.Status, &job.RetryCount, &exitCode,
+			&job.JobType, &job.Port, &envJSON, &job.Status, &job.RetryCount, &exitCode,
 			&job.Stdout, &job.Stderr, &created, &runningAt, &finished,
 		); err != nil {
 			return nil, 0, err
+		}
+
+		if envJSON != "" && envJSON != "{}" {
+			_ = json.Unmarshal([]byte(envJSON), &job.EnvVars)
 		}
 
 		job.CreatedAt, err = time.Parse(time.RFC3339, created)

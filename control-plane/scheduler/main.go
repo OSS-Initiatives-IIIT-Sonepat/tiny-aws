@@ -20,29 +20,31 @@ type Node struct {
 }
 
 type JobRequest struct {
-	Command    string `json:"command"`
-	InstanceID string `json:"instance_id,omitempty"`
-	DeployURL  string `json:"deploy_url,omitempty"`
-	JobType    string `json:"job_type,omitempty"` // "run" (default) | "service"
-	Port       int    `json:"port,omitempty"`     // port the service listens on
+	Command    string            `json:"command"`
+	InstanceID string            `json:"instance_id,omitempty"`
+	DeployURL  string            `json:"deploy_url,omitempty"`
+	JobType    string            `json:"job_type,omitempty"` // "run" (default) | "service"
+	Port       int               `json:"port,omitempty"`     // port the service listens on
+	EnvVars    map[string]string `json:"env_vars,omitempty"` // user-defined environment variables
 }
 
 type Job struct {
-	ID         string     `json:"job_id"`
-	NodeID     string     `json:"node_id"`
-	InstanceID string     `json:"instance_id,omitempty"`
-	Command    string     `json:"command"`
-	DeployURL  string     `json:"deploy_url,omitempty"`
-	JobType    string     `json:"job_type,omitempty"`
-	Port       int        `json:"port,omitempty"`
-	Status     string     `json:"status"`
-	RetryCount int        `json:"retry_count"`
-	ExitCode   *int       `json:"exit_code,omitempty"`
-	Stdout     string     `json:"stdout,omitempty"`
-	Stderr     string     `json:"stderr,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	RunningAt  *time.Time `json:"running_at,omitempty"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	ID         string            `json:"job_id"`
+	NodeID     string            `json:"node_id"`
+	InstanceID string            `json:"instance_id,omitempty"`
+	Command    string            `json:"command"`
+	DeployURL  string            `json:"deploy_url,omitempty"`
+	JobType    string            `json:"job_type,omitempty"`
+	Port       int               `json:"port,omitempty"`
+	EnvVars    map[string]string `json:"env_vars,omitempty"`
+	Status     string            `json:"status"`
+	RetryCount int               `json:"retry_count"`
+	ExitCode   *int              `json:"exit_code,omitempty"`
+	Stdout     string            `json:"stdout,omitempty"`
+	Stderr     string            `json:"stderr,omitempty"`
+	CreatedAt  time.Time         `json:"created_at"`
+	RunningAt  *time.Time        `json:"running_at,omitempty"`
+	FinishedAt *time.Time        `json:"finished_at,omitempty"`
 }
 
 type Instance struct {
@@ -205,6 +207,7 @@ func submitJob(w http.ResponseWriter, r *http.Request, registryURL string) {
 		DeployURL:  req.DeployURL,
 		JobType:    req.JobType,
 		Port:       req.Port,
+		EnvVars:    req.EnvVars,
 		Status:     "pending",
 		CreatedAt:  time.Now().UTC(),
 	}

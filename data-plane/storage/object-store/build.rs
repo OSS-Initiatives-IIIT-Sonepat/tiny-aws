@@ -53,14 +53,22 @@ fn copy_shared_library(dst: &PathBuf, profile: &str) {
         dst.join("lib").join(library_name()),
     ];
 
-    for candidate in candidates {
-        if candidate.exists() {
-            fs::create_dir_all(&target_dir).expect("failed to create target dir");
-            fs::copy(&candidate, target_dir.join(candidate.file_name().unwrap()))
-                .expect("failed to copy storage engine library");
-            break;
-        }
-    }
+    let candidate = candidates.iter().find(|c| c.exists()).unwrap_or_else(|| {
+        panic!(
+            "storage engine library not found in: {:?}",
+            candidates.iter().map(|c| c.display().to_string()).collect::<Vec<_>>()
+        );
+    });
+
+    fs::create_dir_all(&target_dir).expect("failed to create target dir");
+    let destination = target_dir.join(library_name());
+    fs::copy(candidate, &destination).expect("failed to copy storage engine library");
+
+    println!(
+        "cargo:warning=copied storage library {} -> {}",
+        candidate.display(),
+        destination.display()
+    );
 }
 
 fn import_library_name() -> &'static str {

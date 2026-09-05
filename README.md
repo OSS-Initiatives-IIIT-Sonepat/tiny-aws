@@ -1,7 +1,14 @@
-# tiny-aws
+<div align="center">
 
-Your own private cloud on a Linux machine. Deploy apps, run jobs, store objects,
-and spin up isolated compute instances — all from a CLI that works like AWS.
+ <img width="200" height="200" alt="patrick_from_screen" src="https://github.com/user-attachments/assets/a9f2887d-8ac5-4e50-9beb-be75b5ae2cb3" />
+
+<h1> tiny-aws</h1>
+</br>
+The minimum amount of code required to turn your Linux machine into a tiny cloud.
+
+EC2-like compute. Lambda-like functions. Your machine.
+
+</div>
 
 ```bash
 tinyaws instance launch --type medium

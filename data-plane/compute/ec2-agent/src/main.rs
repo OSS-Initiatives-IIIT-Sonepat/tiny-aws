@@ -2,8 +2,10 @@ mod config;
 mod heartbeat;
 mod instances;
 mod jobs;
+mod networking;
 mod node;
 mod registry;
+mod sandbox;
 mod server;
 mod system;
 
@@ -33,6 +35,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Register this machine with control-plane registry (retries if registry is down)
     registry::register_with_retry(&registry_url, &registration).await?;
     println!("node registered with control plane");
+
+    // Set up networking bridge for instance isolation (Linux only, best-effort)
+    #[cfg(unix)]
+    {
+        if let Err(e) = networking::ensure_bridge() {
+            eprintln!("network bridge setup failed (non-fatal): {}", e);
+        }
+        if let Err(e) = networking::enable_forwarding() {
+            eprintln!("ip forwarding setup failed (non-fatal): {}", e);
+        }
+    }
 
     // Background task: ping registry every 10s so we stay "healthy"
     heartbeat::start_heartbeat(node.id.clone(), &registry_url);

@@ -1,0 +1,39 @@
+{
+  "_comment": "tiny-aws seccomp profile: blocks dangerous syscalls for sandboxed workloads",
+  "defaultAction": "SCMP_ACT_ALLOW",
+  "syscalls": [
+    {
+      "names": [
+        "reboot",
+        "kexec_load",
+        "kexec_file_load",
+        "init_module",
+        "finit_module",
+        "delete_module",
+        "acct",
+        "mount",
+        "umount2",
+        "swapon",
+        "swapoff",
+        "pivot_root",
+        "sethostname",
+        "setdomainname",
+        "iopl",
+        "ioperm",
+        "create_module",
+        "query_module",
+        "get_kernel_syms",
+        "nfsservctl",
+        "add_key",
+        "request_key",
+        "keyctl",
+        "ptrace",
+        "process_vm_readv",
+        "process_vm_writev",
+        "lookup_dcookie"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1
+    }
+  ]
+}

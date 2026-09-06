@@ -10,6 +10,8 @@ pub struct InstanceSpec {
     pub instance_type: String,   // stored for logging; not used in provision logic
     #[serde(default)]
     pub base_image: String,
+    #[serde(default)]
+    pub volumes: Vec<String>,    // bind mounts in "host:container" format
 }
 
 // rootfs_base returns the base rootfs path all instances clone from.
@@ -62,19 +64,27 @@ pub fn provision(spec: &InstanceSpec) -> Result<(), String> {
     // --boot: run /sbin/init inside the container
     // -M: machine name = instance_id (used by machinectl)
     let mem_bytes = spec.mem_limit_mb * 1024 * 1024;
+
+    let mut nspawn_args = vec![
+        "--unit".to_string(), format!("tinyaws-{}", spec.id),
+        format!("--property=CPUQuota={}", spec.cpu_limit),
+        format!("--property=MemoryMax={}M", spec.mem_limit_mb),
+        "--".to_string(),
+        "systemd-nspawn".to_string(),
+        "--boot".to_string(),
+        format!("--machine={}", spec.id),
+        format!("--directory={}", dest.display()),
+        "--network-veth".to_string(),
+        "--resolv-conf=copy-host".to_string(),
+    ];
+
+    // add bind mounts for persistent volumes (--volume "host:container")
+    for vol in &spec.volumes {
+        nspawn_args.push(format!("--bind={}", vol));
+    }
+
     let status = std::process::Command::new("systemd-run")
-        .args([
-            "--unit", &format!("tinyaws-{}", spec.id),
-            &format!("--property=CPUQuota={}", spec.cpu_limit),
-            &format!("--property=MemoryMax={}M", spec.mem_limit_mb),
-            "--",
-            "systemd-nspawn",
-            "--boot",
-            &format!("--machine={}", spec.id),
-            &format!("--directory={}", dest.display()),
-            "--network-veth",
-            "--resolv-conf=copy-host",
-        ])
+        .args(&nspawn_args)
         .status()
         .map_err(|e| format!("systemd-run failed: {}", e))?;
 
@@ -84,11 +94,24 @@ pub fn provision(spec: &InstanceSpec) -> Result<(), String> {
 
     let _ = mem_bytes; // used in comment only
     println!("instance {} provisioned (cpu={} mem={}MB)", spec.id, spec.cpu_limit, spec.mem_limit_mb);
+
+    // set up veth networking for this instance (best-effort)
+    // ponytail: derive seq from instance id suffix; collisions possible but unlikely at tiny scale
+    let seq: u16 = spec.id.trim_start_matches(|c: char| !c.is_ascii_digit())
+        .parse().unwrap_or(2);
+    let seq = if seq < 2 { 2 } else { seq }; // 0 and 1 reserved for bridge
+    if let Err(e) = crate::networking::setup_instance_network(&spec.id, seq) {
+        eprintln!("instance {} networking failed (non-fatal): {}", spec.id, e);
+    }
+
     Ok(())
 }
 
 // destroy stops the nspawn container and removes its rootfs.
 pub fn destroy(instance_id: &str) {
+    // tear down veth networking
+    crate::networking::teardown_instance_network(instance_id);
+
     // stop the systemd unit
     let _ = std::process::Command::new("machinectl")
         .args(["poweroff", instance_id])

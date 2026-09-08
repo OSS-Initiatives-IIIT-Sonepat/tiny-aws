@@ -7,12 +7,15 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
+	"strings"
+	"time"
 )
 
 // Handles: tinyaws instance launch|list|terminate|info ...
 func runInstance(args []string) {
 	if len(args) < 1 {
-		fmt.Println("usage: tinyaws instance launch [--type nano|micro|small|medium|large]")
+		fmt.Println("usage: tinyaws instance launch [--type nano|micro|small|medium|large] [--volume host:container]...")
 		fmt.Println("       tinyaws instance list")
 		fmt.Println("       tinyaws instance terminate <id>")
 		fmt.Println("       tinyaws instance info <id>")
@@ -49,16 +52,25 @@ func runInstance(args []string) {
 	}
 }
 
-// POST /instances — launch an instance. Optional --type flag sets resource limits.
+// POST /instances — launch an instance. Optional --type and --volume flags.
 func runInstanceLaunch(args []string) {
 	instanceType := "small"
+	var volumes []string
 	for i := 0; i < len(args)-1; i++ {
 		if args[i] == "--type" {
 			instanceType = args[i+1]
+			i++
+		} else if args[i] == "--volume" {
+			volumes = append(volumes, args[i+1])
+			i++
 		}
 	}
 
-	payload, _ := json.Marshal(map[string]string{"instance_type": instanceType})
+	body := map[string]any{"instance_type": instanceType}
+	if len(volumes) > 0 {
+		body["volumes"] = volumes
+	}
+	payload, _ := json.Marshal(body)
 	resp, err := httpPost(registryURL()+"/instances", "application/json",
 		bytes.NewReader(payload))
 	if err != nil {
@@ -160,10 +172,67 @@ func runInstanceInfo(id string) {
 	fmt.Printf("workspace:     /var/lib/tinyaws/instances/%s\n", inst["id"])
 }
 
-// runInstanceShell prints the machinectl command to drop into an instance shell.
+// runInstanceShell drops into an interactive shell inside the instance container.
 func runInstanceShell(id string) {
-	fmt.Printf("Run on the agent machine:\n")
-	fmt.Printf("  sudo machinectl shell %s\n", id)
-	fmt.Printf("\nOr to run a single command:\n")
-	fmt.Printf("  sudo systemd-run --machine=%s -- <command>\n", id)
+	// try machinectl shell first (interactive)
+	cmd := exec.Command("sudo", "machinectl", "shell", id)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		// fallback: print manual instructions
+		fmt.Printf("shell failed: %v\n", err)
+		fmt.Printf("\nRun manually on the agent machine:\n")
+		fmt.Printf("  sudo machinectl shell %s\n", id)
+	}
+}
+
+// Handles: tinyaws exec <instance-id> -- <command...>
+// Submits a job to run inside the specified instance and waits for the result.
+func runExec(args []string) {
+	if len(args) < 3 {
+		fmt.Println("usage: tinyaws exec <instance-id> -- <command...>")
+		os.Exit(1)
+	}
+
+	instanceID := args[0]
+
+	// find "--" separator
+	cmdStart := -1
+	for i, a := range args {
+		if a == "--" {
+			cmdStart = i + 1
+			break
+		}
+	}
+	if cmdStart < 0 || cmdStart >= len(args) {
+		fmt.Println("usage: tinyaws exec <instance-id> -- <command...>")
+		os.Exit(1)
+	}
+
+	command := strings.Join(args[cmdStart:], " ")
+	jobID := submitJobCommand(command, instanceID)
+	fmt.Printf("exec job %s on instance %s\n", jobID, instanceID)
+
+	// poll until done
+	for {
+		job, err := fetchJob(jobID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		if job.Status == "done" || job.Status == "failed" {
+			if job.Stdout != "" {
+				fmt.Print(job.Stdout)
+			}
+			if job.Stderr != "" {
+				fmt.Fprintf(os.Stderr, "%s", job.Stderr)
+			}
+			if job.ExitCode != nil && *job.ExitCode != 0 {
+				os.Exit(*job.ExitCode)
+			}
+			break
+		}
+		time.Sleep(time.Second)
+	}
 }

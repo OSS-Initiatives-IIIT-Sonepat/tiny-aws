@@ -1,0 +1,17 @@
+[Unit]
+Description=tiny-aws control plane and data plane services
+After=network.target
+Wants=network.target
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/tinyaws-start
+ExecStop=/usr/local/bin/tinyaws-stop
+Restart=on-failure
+RestartSec=5
+Environment=REGISTRY_URL=http://127.0.0.1:9000
+Environment=SCHEDULER_URL=http://127.0.0.1:9001
+Environment=OBJECT_STORE_URL=http://127.0.0.1:7001
+
+[Install]
+WantedBy=multi-user.target

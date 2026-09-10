@@ -66,11 +66,11 @@ func runInstanceLaunch(args []string) {
 		}
 	}
 
-	body := map[string]any{"instance_type": instanceType}
+	reqBody := map[string]any{"instance_type": instanceType}
 	if len(volumes) > 0 {
-		body["volumes"] = volumes
+		reqBody["volumes"] = volumes
 	}
-	payload, _ := json.Marshal(body)
+	payload, _ := json.Marshal(reqBody)
 	resp, err := httpPost(registryURL()+"/instances", "application/json",
 		bytes.NewReader(payload))
 	if err != nil {

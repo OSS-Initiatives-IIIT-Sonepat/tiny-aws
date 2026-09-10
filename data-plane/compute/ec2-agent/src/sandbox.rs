@@ -94,7 +94,18 @@ pub fn wrap_command_with_rootfs(
     let user_cmd = if args.is_empty() {
         prog.to_string()
     } else {
-        format!("{} {}", prog, args.iter().map(|a| format!("'{}'", a)).collect::<Vec<_>>().join(" "))
+        // args are typically ["sh", "-c", "actual command"] — join with spaces, no extra quoting
+        let mut parts = vec![prog.to_string()];
+        parts.extend(args.iter().map(|a| {
+            // only quote args that contain spaces and aren't already the -c flag argument
+            if a.contains(' ') || a.contains('\'') {
+                // use double quotes to avoid single-quote nesting issues
+                format!("\"{}\"", a.replace('"', "\\\""))
+            } else {
+                a.to_string()
+            }
+        }));
+        parts.join(" ")
     };
 
     let script = format!(

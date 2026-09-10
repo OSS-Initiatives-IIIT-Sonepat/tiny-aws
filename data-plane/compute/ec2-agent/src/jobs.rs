@@ -149,12 +149,13 @@ pub fn start_job_worker(node_id: String, scheduler_url: String, registry_url: St
             let _cgroup = crate::sandbox::setup_cgroup(&job.job_id, 512, 100);
 
             let (exit_code, stdout, stderr) = if !job.deploy_url.is_empty() {
-                run_deploy(&client, &job.deploy_url, workspace.as_deref(), &job.env_vars).await
+                run_deploy(&client, &job.deploy_url, workspace.as_deref(), &job.env_vars, &job.job_id).await
             } else {
                 run_command_in(&job.command, workspace.as_deref(), nspawn_prefix.as_deref(), &job.env_vars).await
             };
 
             crate::sandbox::cleanup_cgroup(&job.job_id);
+            crate::sandbox::cleanup_overlay(&job.job_id);
 
             let status = if exit_code == 0 { "done" } else { "failed" };
 
@@ -195,13 +196,50 @@ async fn run_service(
 
     let log_path = run_dir.join("service.log");
 
+    // Check for tinyaws.build — if present, build rootfs and override command
+    #[cfg(unix)]
+    let build_spec = crate::builder::BuildSpec::from_dir(&run_dir);
+    #[cfg(not(unix))]
+    let build_spec: Option<crate::builder::BuildSpec> = None;
+
+    #[cfg(unix)]
+    let (rootfs_image, overlay_scratch) = if let Some(ref spec) = build_spec {
+        match crate::builder::build_image(spec) {
+            Ok(img) => {
+                let scratch = crate::sandbox::prepare_overlay(&job.job_id);
+                (Some(img), Some(scratch))
+            }
+            Err(e) => {
+                eprintln!("service {}: image build failed: {}", job.job_id, e);
+                let _ = report_result(&client, &scheduler_url, &job.job_id, "failed", -1, String::new(), e).await;
+                return;
+            }
+        }
+    } else {
+        (None, None)
+    };
+    #[cfg(not(unix))]
+    let (rootfs_image, overlay_scratch): (Option<PathBuf>, Option<PathBuf>) = (None, None);
+    let _ = (&rootfs_image, &overlay_scratch); // used on unix
+
     // build the command
     #[cfg(windows)]
     let start_script = run_dir.join("start.ps1");
     #[cfg(not(windows))]
     let start_script = run_dir.join("start.sh");
 
-    let (prog, args): (&str, Vec<&str>) = if !job.command.is_empty() {
+    // determine the start command from tinyaws.build or start script
+    let (prog, args): (&str, Vec<&str>) = if let Some(ref spec) = build_spec {
+        if !spec.start.is_empty() {
+            ("sh", vec!["-c", &spec.start])
+        } else if start_script.exists() {
+            ("sh", vec!["-c", "sh /app/start.sh"])
+        } else {
+            eprintln!("service {}: no 'start' in tinyaws.build and no start script", job.job_id);
+            let _ = report_result(&client, &scheduler_url, &job.job_id, "failed", -1, String::new(), "no start command".into()).await;
+            return;
+        }
+    } else if !job.command.is_empty() {
         #[cfg(windows)]
         { ("cmd", vec!["/C", &job.command]) }
         #[cfg(not(windows))]
@@ -227,10 +265,13 @@ async fn run_service(
     // ponytail: default 1GB / 200% CPU for services; override via instance spec when nspawn
     let _cgroup = crate::sandbox::setup_cgroup(&job.job_id, 1024, 200);
 
-    // K1: on Linux, wrap with unshare for pid+mount+ipc namespace isolation (on by default)
-    // ponytail: disable with TINYAWS_SANDBOX=0; requires root (or user namespaces enabled)
+    // K1: on Linux, wrap with namespace isolation.
+    // If rootfs is available (from tinyaws.build), use overlayfs + pivot_root for full fs isolation.
+    // Otherwise, use unshare for PID + mount isolation only.
     #[cfg(unix)]
-    let (prog, args): (String, Vec<String>) = if crate::sandbox::enabled() {
+    let (prog, args): (String, Vec<String>) = if let (Some(ref img), Some(ref scratch)) = (&rootfs_image, &overlay_scratch) {
+        crate::sandbox::wrap_command_with_rootfs(prog, &args, img, &run_dir, scratch)
+    } else if crate::sandbox::enabled() {
         crate::sandbox::wrap_command(prog, &args)
     } else {
         (prog.into(), args.into_iter().map(|s| s.to_string()).collect())
@@ -296,8 +337,9 @@ async fn run_service(
     // signal log uploader to stop and do one final upload
     log_done.store(true, std::sync::atomic::Ordering::Relaxed);
 
-    // clean up cgroup
+    // clean up cgroup and overlay
     crate::sandbox::cleanup_cgroup(&job.job_id);
+    crate::sandbox::cleanup_overlay(&job.job_id);
 
     let final_status = if exit_code == 0 { "done" } else { "crashed" };
     println!("service {} exited exit_code={} status={}", job.job_id, exit_code, final_status);
@@ -405,11 +447,14 @@ async fn download_and_extract(client: &reqwest::Client, deploy_url: &str, dir: &
 }
 
 // Downloads zip from deploy_url, extracts to workspace (or temp dir), runs start script.
+// If the deploy contains a tinyaws.build file, builds a rootfs image and runs inside it
+// with overlayfs + pivot_root for full filesystem isolation.
 async fn run_deploy(
     client: &reqwest::Client,
     deploy_url: &str,
     workspace: Option<&Path>,
     env_vars: &HashMap<String, String>,
+    #[allow(unused_variables)] job_id: &str,
 ) -> (i32, String, String) {
     let deploy_dir = workspace
         .map(|p| p.to_path_buf())
@@ -419,13 +464,20 @@ async fn run_deploy(
         return (-1, String::new(), e);
     }
 
+    // Check for tinyaws.build — if present, build a rootfs and run inside it
+    #[cfg(unix)]
+    if let Some(spec) = crate::builder::BuildSpec::from_dir(&deploy_dir) {
+        return run_deploy_in_rootfs(&deploy_dir, env_vars, job_id, &spec).await;
+    }
+
+    // No tinyaws.build — run directly (legacy path)
     #[cfg(windows)]
     let start_script = deploy_dir.join("start.ps1");
     #[cfg(not(windows))]
     let start_script = deploy_dir.join("start.sh");
 
     if !start_script.exists() {
-        return (-1, String::new(), "no start script found in deploy archive".into());
+        return (-1, String::new(), "no start script or tinyaws.build found in deploy archive".into());
     }
 
     #[cfg(windows)]
@@ -434,6 +486,72 @@ async fn run_deploy(
     let run_cmd = format!("sh '{}'", start_script.to_string_lossy());
 
     run_command_in(&run_cmd, Some(&deploy_dir), None, env_vars).await
+}
+
+// Builds a rootfs from tinyaws.build and runs the app inside it with overlayfs + pivot_root.
+#[cfg(unix)]
+async fn run_deploy_in_rootfs(
+    deploy_dir: &PathBuf,
+    env_vars: &HashMap<String, String>,
+    job_id: &str,
+    spec: &crate::builder::BuildSpec,
+) -> (i32, String, String) {
+    // build the image (or use cached)
+    let image_path = match crate::builder::build_image(spec) {
+        Ok(p) => p,
+        Err(e) => return (-1, String::new(), format!("image build failed: {}", e)),
+    };
+
+    // determine what command to run
+    let start_cmd = if !spec.start.is_empty() {
+        spec.start.clone()
+    } else {
+        // fall back to start.sh inside the deploy dir
+        let start_sh = deploy_dir.join("start.sh");
+        if start_sh.exists() {
+            "sh /app/start.sh".to_string()
+        } else {
+            return (-1, String::new(), "no 'start' in tinyaws.build and no start.sh found".into());
+        }
+    };
+
+    // prepare overlay scratch dirs
+    let scratch = crate::sandbox::prepare_overlay(job_id);
+
+    // build the isolated command: unshare + overlayfs + pivot_root + exec
+    let (prog, args) = crate::sandbox::wrap_command_with_rootfs(
+        "sh", &["-c", &start_cmd],
+        &image_path,
+        deploy_dir,
+        &scratch,
+    );
+
+    println!("deploy {}: running in rootfs {} (overlay at {})", job_id, image_path.display(), scratch.display());
+
+    // execute it
+    let mut cmd = tokio::process::Command::new(&prog);
+    for arg in &args { cmd.arg(arg); }
+
+    // inject user-defined environment variables
+    for (k, v) in env_vars {
+        cmd.env(k, v);
+    }
+
+    // new process group for cleanup
+    #[cfg(unix)]
+    unsafe {
+        cmd.pre_exec(|| { libc::setpgid(0, 0); Ok(()) });
+    }
+
+    match cmd.output().await {
+        Ok(output) => {
+            let code = output.status.code().unwrap_or(-1);
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            (code, stdout, stderr)
+        }
+        Err(e) => (-1, String::new(), e.to_string()),
+    }
 }
 
 // J4: polls registry every 10s for stopped services on this node and SIGTERMs them.

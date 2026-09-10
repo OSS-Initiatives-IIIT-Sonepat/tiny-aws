@@ -149,7 +149,7 @@ pub fn start_job_worker(node_id: String, scheduler_url: String, registry_url: St
             let _cgroup = crate::sandbox::setup_cgroup(&job.job_id, 512, 100);
 
             let (exit_code, stdout, stderr) = if !job.deploy_url.is_empty() {
-                run_deploy(&client, &job.deploy_url, workspace.as_deref()).await
+                run_deploy(&client, &job.deploy_url, workspace.as_deref(), &job.env_vars).await
             } else {
                 run_command_in(&job.command, workspace.as_deref(), nspawn_prefix.as_deref(), &job.env_vars).await
             };
@@ -409,6 +409,7 @@ async fn run_deploy(
     client: &reqwest::Client,
     deploy_url: &str,
     workspace: Option<&Path>,
+    env_vars: &HashMap<String, String>,
 ) -> (i32, String, String) {
     let deploy_dir = workspace
         .map(|p| p.to_path_buf())
@@ -432,7 +433,7 @@ async fn run_deploy(
     #[cfg(not(windows))]
     let run_cmd = format!("sh '{}'", start_script.to_string_lossy());
 
-    run_command_in(&run_cmd, Some(&deploy_dir), None, &HashMap::new()).await
+    run_command_in(&run_cmd, Some(&deploy_dir), None, env_vars).await
 }
 
 // J4: polls registry every 10s for stopped services on this node and SIGTERMs them.

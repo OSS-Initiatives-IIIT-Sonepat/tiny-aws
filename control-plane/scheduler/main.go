@@ -559,13 +559,16 @@ func pollSQSQueue(sqsURL, registryURL string) {
 			}
 			seq := atomic.AddUint64(&jobSeq, 1)
 			job := Job{
-				ID:        fmt.Sprintf("job-%d", seq),
-				NodeID:    node.ID,
+				ID:         fmt.Sprintf("job-%d", seq),
+				NodeID:     node.ID,
 				InstanceID: req.InstanceID,
-				Command:   req.Command,
-				DeployURL: req.DeployURL,
-				Status:    "pending",
-				CreatedAt: time.Now().UTC(),
+				Command:    req.Command,
+				DeployURL:  req.DeployURL,
+				JobType:    req.JobType,
+				Port:       req.Port,
+				EnvVars:    req.EnvVars,
+				Status:     "pending",
+				CreatedAt:  time.Now().UTC(),
 			}
 			jobsMu.Lock()
 			jobs[job.ID] = job

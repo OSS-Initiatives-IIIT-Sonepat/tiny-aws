@@ -301,7 +301,7 @@ Key ones:
 |----------|---------|--------------|
 | `TINYAWS_API_KEY` | none | Bearer auth on all APIs |
 | `AGENT_ADVERTISE_ADDR` | hostname | IP other services use to reach this agent |
-| `TINYAWS_ISOLATE` | 0 | Set to `1` to run services in `unshare` namespaces |
+| `TINYAWS_SANDBOX` | 1 | Sandbox isolation for jobs (PID + mount + IPC namespaces). Set `0` to disable |
 | `TINYAWS_ROOTFS_BASE` | `/var/lib/tinyaws/base` | Base rootfs for instances |
 | `JOB_TIMEOUT_SECS` | 3600 | How long a job can run before timeout |
 | `MAX_JOBS_PER_NODE` | 1 | Concurrent jobs per compute node |

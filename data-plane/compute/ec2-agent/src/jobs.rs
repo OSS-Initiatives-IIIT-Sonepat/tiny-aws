@@ -269,7 +269,7 @@ async fn run_service(
     // If rootfs is available (from tinyaws.build), use overlayfs + pivot_root for full fs isolation.
     // Otherwise, use unshare for PID + mount isolation only.
     #[cfg(unix)]
-    let (prog, args): (String, Vec<String>) = if let (Some(ref img), Some(ref scratch)) = (&rootfs_image, &overlay_scratch) {
+    let (prog, args): (String, Vec<String>) = if let (Some(img), Some(scratch)) = (&rootfs_image, &overlay_scratch) {
         crate::sandbox::wrap_command_with_rootfs(prog, &args, img, &run_dir, scratch)
     } else if crate::sandbox::enabled() {
         crate::sandbox::wrap_command(prog, &args)

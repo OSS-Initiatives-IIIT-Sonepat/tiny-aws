@@ -12,7 +12,7 @@ EC2-like compute. Lambda-like functions. Your machine.
 
 ```bash
 tinyaws instance launch --type medium
-tinyaws deploy ./my-web-app --service --port 3000 --instance i-1
+tinyaws deploy ./my-web-app --service --port 3000 --env NODE_ENV=production
 tinyaws service list
 curl http://localhost:8088/   # load balancer routes to it
 ```
@@ -34,6 +34,8 @@ cluster). It gives you:
 | SNS | HTTP fan-out pub/sub |
 | IAM | Bearer tokens with roles + expiry |
 | VPC / SGs | Metadata + `iptables` rules via network agent |
+| Docker images | `tinyaws.build` — describe your Linux box in 4 lines |
+| Process sandbox | `unshare` + `overlayfs` + `pivot_root` + cgroups + seccomp |
 
 ---
 
@@ -86,10 +88,20 @@ cp .env.example .env.local
 # edit .env.local — set TINYAWS_API_KEY, AGENT_ADVERTISE_ADDR, etc.
 
 ./scripts/run-local.sh
+
+# or use the start/stop scripts (all services in background with logs)
+./scripts/tinyaws-start.sh      # starts everything, logs to /var/log/tinyaws/
+./scripts/tinyaws-stop.sh       # stops everything
 ```
 
 Starts: registry (:9000), ec2-agent (:8080), object-store (:7001),
 scheduler (:9001), controller (:9002), load-balancer (:8088).
+
+**Auto-restart on boot (optional):**
+```bash
+sudo cp scripts/tinyaws.service /etc/systemd/system/
+sudo systemctl enable --now tinyaws
+```
 
 ### 5. Install the CLI
 
@@ -124,8 +136,8 @@ tinyaws instance launch --type small
 # wait ~10s for status to go provisioning → running
 tinyaws instance list
 
-# deploy as a long-running service
-tinyaws deploy ./my-app --service --port 3000 --instance i-1
+# deploy as a long-running service with env vars
+tinyaws deploy ./my-app --service --port 3000 --env NODE_ENV=production
 
 # check it's running
 tinyaws service list
@@ -135,6 +147,56 @@ curl http://localhost:8088/
 
 # or direct
 curl http://localhost:3000/
+```
+
+---
+
+## tinyaws.build — describe your Linux box
+
+Instead of Docker, put a `tinyaws.build` file in your app directory. tiny-aws
+builds a rootfs from scratch, caches it, and runs your app inside with full
+filesystem isolation (overlayfs + pivot_root).
+
+```
+# tinyaws.build
+base: ubuntu
+packages: python3 python3-pip
+run: pip install -r requirements.txt
+start: python3 app.py
+```
+
+| Field | What it does | Required |
+|-------|-------------|----------|
+| `base` | Debootstrap suite or path to rootfs (default: existing base) | No |
+| `packages` | Space-separated apt packages to install | No |
+| `run` | Shell commands to run during build (repeatable) | No |
+| `start` | Command to exec at runtime (overrides start.sh) | No |
+
+Then deploy as usual:
+```bash
+tinyaws deploy ./my-app --service --port 3000 --env DATABASE_URL=postgres://localhost/db
+```
+
+The agent:
+1. Reads `tinyaws.build`
+2. Builds a rootfs (debootstrap + apt install) — cached by content hash
+3. Mounts overlayfs (rootfs = read-only, scratch = writable)
+4. `pivot_root` into it — host filesystem is invisible
+5. Copies app code into `/app/`
+6. Execs your start command
+
+No Docker. No prebuilt images. No registry. Just apt and Linux.
+
+---
+
+## Run a command inside an instance
+
+```bash
+# run a command and get output
+tinyaws exec i-1 -- cat /proc/meminfo
+
+# interactive shell
+tinyaws instance shell i-1
 ```
 
 ---
@@ -151,8 +213,9 @@ curl http://localhost:3000/
 
 ```bash
 tinyaws instance launch --type large
+tinyaws instance launch --type small --volume /data/myapp:/mnt/data
 tinyaws instance info i-1      # shows cpu_limit, mem_limit_mb, status
-tinyaws instance shell i-1     # prints: sudo machinectl shell i-1
+tinyaws instance shell i-1     # interactive shell via machinectl
 tinyaws instance terminate i-1 # stops container, frees disk
 ```
 
@@ -179,13 +242,14 @@ See [examples/kubernetes/README.md](examples/kubernetes/README.md) for details.
 ## All CLI commands
 
 ```
-tinyaws instance launch [--type nano|micro|small|medium|large]
+tinyaws instance launch [--type nano|micro|small|medium|large] [--volume host:container]...
 tinyaws instance list
 tinyaws instance info <id>
-tinyaws instance shell <id>        # prints machinectl command
+tinyaws instance shell <id>        # interactive shell via machinectl
 tinyaws instance terminate <id>
 
-tinyaws deploy <dir> [--instance i-1] [--service] [--port N] [--wait]
+tinyaws deploy <dir> [--instance i-1] [--service] [--port N] [--wait] [--env KEY=VAL]...
+tinyaws exec <instance-id> -- <command...>
 
 tinyaws service list
 tinyaws service stop <id>
@@ -303,6 +367,8 @@ Key ones:
 | `AGENT_ADVERTISE_ADDR` | hostname | IP other services use to reach this agent |
 | `TINYAWS_SANDBOX` | 1 | Sandbox isolation for jobs (PID + mount + IPC namespaces). Set `0` to disable |
 | `TINYAWS_ROOTFS_BASE` | `/var/lib/tinyaws/base` | Base rootfs for instances |
+| `TINYAWS_IMAGES_DIR` | `/var/lib/tinyaws/images` | Where built rootfs images are cached |
+| `TINYAWS_SECCOMP_PROFILE` | auto-detected | Path to seccomp BPF filter for sandboxed jobs |
 | `JOB_TIMEOUT_SECS` | 3600 | How long a job can run before timeout |
 | `MAX_JOBS_PER_NODE` | 1 | Concurrent jobs per compute node |
 | `REPLICATION_FACTOR` | 1 | Object store replication copies |

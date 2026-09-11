@@ -65,6 +65,47 @@ jobs:
         run: go build ./...
         working-directory: data-plane/networking/load-balancer
 
+      # Go — unit tests
+      - name: Test registry
+        run: go test -count=1 ./...
+        working-directory: control-plane/registry
+
+      - name: Test scheduler
+        run: go test -count=1 ./...
+        working-directory: control-plane/scheduler
+
+      - name: Test SQS
+        run: go test -count=1 ./...
+        working-directory: control-plane/messaging/sqs
+
+      - name: Test SNS
+        run: go test -count=1 ./...
+        working-directory: control-plane/messaging/sns
+
+      - name: Test networking/vpc
+        run: go test -count=1 ./...
+        working-directory: control-plane/networking/vpc
+
+      - name: Test lambda-runtime
+        run: go test -count=1 ./...
+        working-directory: data-plane/compute/lambda-runtime
+
+      - name: Test load-balancer
+        run: go test -count=1 ./...
+        working-directory: data-plane/networking/load-balancer
+
+      - name: Test controller
+        run: go test -count=1 ./...
+        working-directory: control-plane/controller
+
+      - name: Test API gateway
+        run: go test -count=1 ./...
+        working-directory: control-plane/api
+
+      - name: Test metadata
+        run: go test -count=1 ./...
+        working-directory: control-plane/metadata
+
       # Rust — data plane
       - name: Build ec2-agent
         run: cargo build

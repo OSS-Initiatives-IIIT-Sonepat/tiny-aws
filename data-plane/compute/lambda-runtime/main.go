@@ -147,13 +147,17 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 	// build download URL for function zip
 	codeURL := fmt.Sprintf("%s/buckets/%s/objects/%s", objectStoreURL, fn.Bucket, fn.Key)
 
-	// G7: job command encodes runtime, handler, event via env vars passed as shell prefix
-	// prepend env var exports — values quoted with %q, no injection risk from DB-stored handler names
-	envPrefix := fmt.Sprintf("TINYAWS_HANDLER=%q TINYAWS_CODE_URL=%q TINYAWS_EVENT=%q ",
-		fn.Handler, codeURL, string(event))
-	cmd := envPrefix + buildInvokeCommand(fn.Runtime)
+	// G7: job command encodes runtime, handler, event via actual env vars on the job
+	// Pass handler, code URL, and event as env_vars on the scheduler job —
+	// no shell interpolation, no injection risk.
+	envVars := map[string]string{
+		"TINYAWS_HANDLER":  fn.Handler,
+		"TINYAWS_CODE_URL": codeURL,
+		"TINYAWS_EVENT":    string(event),
+	}
+	cmd := buildInvokeCommand(fn.Runtime)
 
-	payload, _ := json.Marshal(map[string]any{"command": cmd})
+	payload, _ := json.Marshal(map[string]any{"command": cmd, "env_vars": envVars})
 	resp, err := http.Post(schedulerURL+"/jobs", "application/json", bytes.NewReader(payload))
 	if err != nil {
 		http.Error(w, "scheduler error", http.StatusInternalServerError)

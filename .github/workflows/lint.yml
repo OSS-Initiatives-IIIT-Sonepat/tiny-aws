@@ -97,3 +97,12 @@ jobs:
       - name: cargo check object-store
         run: cargo check
         working-directory: data-plane/storage/object-store
+
+      # Rust unit tests
+      - name: test ec2-agent
+        run: cargo test
+        working-directory: data-plane/compute/ec2-agent
+
+      - name: test common/types
+        run: cargo test
+        working-directory: data-plane/common/types

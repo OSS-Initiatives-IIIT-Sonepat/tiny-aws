@@ -37,13 +37,16 @@ func runVPC(args []string) {
 	case "list":
 		resp, err := httpGet(networkingURL() + "/vpcs")
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "error: networking service unreachable: %v\n", err)
 			os.Exit(1)
 		}
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
 		var list []map[string]any
-		json.Unmarshal(body, &list)
+		if err := json.Unmarshal(body, &list); err != nil {
+			fmt.Fprintf(os.Stderr, "error: invalid response from networking service\n")
+			os.Exit(1)
+		}
 		for _, v := range list {
 			fmt.Printf("%-12s %-20s cidr=%s\n", v["id"], v["name"], v["cidr"])
 		}
@@ -83,13 +86,16 @@ func runSubnet(args []string) {
 		}
 		resp, err := httpGet(url)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "error: networking service unreachable: %v\n", err)
 			os.Exit(1)
 		}
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
 		var list []map[string]any
-		json.Unmarshal(body, &list)
+		if err := json.Unmarshal(body, &list); err != nil {
+			fmt.Fprintf(os.Stderr, "error: invalid response from networking service\n")
+			os.Exit(1)
+		}
 		for _, s := range list {
 			fmt.Printf("%-15s vpc=%-12s cidr=%s\n", s["id"], s["vpc_id"], s["cidr"])
 		}
@@ -120,13 +126,16 @@ func runSG(args []string) {
 	case "list":
 		resp, err := httpGet(networkingURL() + "/security-groups")
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "error: networking service unreachable: %v\n", err)
 			os.Exit(1)
 		}
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
 		var list []map[string]any
-		json.Unmarshal(body, &list)
+		if err := json.Unmarshal(body, &list); err != nil {
+			fmt.Fprintf(os.Stderr, "error: invalid response from networking service\n")
+			os.Exit(1)
+		}
 		for _, sg := range list {
 			fmt.Printf("%-12s %-20s vpc=%s\n", sg["id"], sg["name"], sg["vpc_id"])
 		}

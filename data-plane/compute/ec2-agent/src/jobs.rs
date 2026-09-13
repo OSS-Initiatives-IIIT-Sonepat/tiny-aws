@@ -721,3 +721,101 @@ async fn run_command_in(command: &str, workdir: Option<&Path>, nspawn_prefix: Op
         Err(e) => (-1, String::new(), e.to_string()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workspace_root_is_under_temp() {
+        let root = workspace_root();
+        assert!(root.ends_with("tinyaws"));
+    }
+
+    #[test]
+    fn workspace_path_appends_instance_id() {
+        let p = workspace_path("i-42");
+        assert!(p.ends_with("tinyaws/i-42") || p.ends_with("tinyaws\\i-42"));
+    }
+
+    #[test]
+    fn job_update_serializes() {
+        let u = JobUpdate {
+            status: "done".into(),
+            exit_code: Some(0),
+            stdout: "ok\n".into(),
+            stderr: String::new(),
+        };
+        let json = serde_json::to_string(&u).unwrap();
+        assert!(json.contains(r#""status":"done""#));
+        assert!(json.contains(r#""exit_code":0"#));
+    }
+
+    #[test]
+    fn job_update_null_exit_code() {
+        let u = JobUpdate {
+            status: "running".into(),
+            exit_code: None,
+            stdout: String::new(),
+            stderr: String::new(),
+        };
+        let json = serde_json::to_string(&u).unwrap();
+        assert!(json.contains(r#""exit_code":null"#));
+    }
+
+    #[test]
+    fn job_deserialize_minimal() {
+        let raw = r#"{"job_id":"j-1","command":"echo hi"}"#;
+        let job: Job = serde_json::from_str(raw).unwrap();
+        assert_eq!(job.job_id, "j-1");
+        assert_eq!(job.command, "echo hi");
+        assert_eq!(job.job_type, ""); // default
+        assert_eq!(job.port, 0);
+        assert!(job.env_vars.is_empty());
+    }
+
+    #[test]
+    fn job_deserialize_full() {
+        let raw = r#"{
+            "job_id":"j-2","command":"npm start",
+            "deploy_url":"http://x/app.zip","instance_id":"i-1",
+            "job_type":"service","port":3000,
+            "env_vars":{"NODE_ENV":"production"}
+        }"#;
+        let job: Job = serde_json::from_str(raw).unwrap();
+        assert_eq!(job.job_type, "service");
+        assert_eq!(job.port, 3000);
+        assert_eq!(job.env_vars.get("NODE_ENV").unwrap(), "production");
+    }
+
+    #[test]
+    fn sync_workspaces_creates_and_retains() {
+        let instances = vec![
+            Instance { id: "i-100".into(), node_id: "n1".into(), status: "running".into() },
+            Instance { id: "i-101".into(), node_id: "n1".into(), status: "terminated".into() },
+        ];
+        let workspaces: Arc<Mutex<HashMap<String, PathBuf>>> = Arc::new(Mutex::new(HashMap::new()));
+
+        sync_workspaces(&instances, &workspaces);
+
+        let map = workspaces.lock().unwrap();
+        // running instance gets a workspace
+        assert!(map.contains_key("i-100"));
+        // terminated instance is not tracked
+        assert!(!map.contains_key("i-101"));
+    }
+
+    #[test]
+    fn sync_workspaces_drops_terminated() {
+        let workspaces: Arc<Mutex<HashMap<String, PathBuf>>> = Arc::new(Mutex::new(HashMap::new()));
+        workspaces.lock().unwrap().insert("i-200".into(), PathBuf::from("/tmp/tinyaws/i-200"));
+
+        let instances = vec![
+            Instance { id: "i-200".into(), node_id: "n1".into(), status: "terminated".into() },
+        ];
+        sync_workspaces(&instances, &workspaces);
+
+        let map = workspaces.lock().unwrap();
+        assert!(!map.contains_key("i-200"));
+    }
+}

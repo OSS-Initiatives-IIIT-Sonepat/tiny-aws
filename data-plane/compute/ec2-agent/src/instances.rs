@@ -143,3 +143,85 @@ pub fn nspawn_exec(instance_id: &str) -> Option<Vec<String>> {
         "--".into(),
     ])
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn rootfs_base_default() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::remove_var("TINYAWS_ROOTFS_BASE") };
+        assert_eq!(rootfs_base(), PathBuf::from("/var/lib/tinyaws/base"));
+    }
+
+    #[test]
+    fn rootfs_base_from_env() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::set_var("TINYAWS_ROOTFS_BASE", "/custom/base") };
+        assert_eq!(rootfs_base(), PathBuf::from("/custom/base"));
+        unsafe { std::env::remove_var("TINYAWS_ROOTFS_BASE") };
+    }
+
+    #[test]
+    fn rootfs_path_default() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::remove_var("TINYAWS_INSTANCES_DIR") };
+        assert_eq!(
+            rootfs_path("i-abc123"),
+            PathBuf::from("/var/lib/tinyaws/instances/i-abc123")
+        );
+    }
+
+    #[test]
+    fn rootfs_path_from_env() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::set_var("TINYAWS_INSTANCES_DIR", "/tmp/inst") };
+        assert_eq!(rootfs_path("i-1"), PathBuf::from("/tmp/inst/i-1"));
+        unsafe { std::env::remove_var("TINYAWS_INSTANCES_DIR") };
+    }
+
+    #[test]
+    fn instance_spec_deserialize() {
+        let json = r#"{
+            "id": "i-test",
+            "cpu_limit": "200%",
+            "mem_limit_mb": 512,
+            "instance_type": "t2.micro"
+        }"#;
+        let spec: InstanceSpec = serde_json::from_str(json).unwrap();
+        assert_eq!(spec.id, "i-test");
+        assert_eq!(spec.cpu_limit, "200%");
+        assert_eq!(spec.mem_limit_mb, 512);
+        assert_eq!(spec.instance_type, "t2.micro");
+        assert_eq!(spec.base_image, "");
+        assert!(spec.volumes.is_empty());
+    }
+
+    #[test]
+    fn instance_spec_with_volumes() {
+        let json = r#"{
+            "id": "i-vol",
+            "cpu_limit": "100%",
+            "mem_limit_mb": 256,
+            "instance_type": "t2.small",
+            "base_image": "/custom/rootfs",
+            "volumes": ["/data:/data", "/logs:/var/log"]
+        }"#;
+        let spec: InstanceSpec = serde_json::from_str(json).unwrap();
+        assert_eq!(spec.base_image, "/custom/rootfs");
+        assert_eq!(spec.volumes.len(), 2);
+        assert_eq!(spec.volumes[0], "/data:/data");
+    }
+
+    #[test]
+    fn nspawn_exec_nonexistent_returns_none() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::set_var("TINYAWS_INSTANCES_DIR", "/tmp/tinyaws-test-nonexistent") };
+        assert!(nspawn_exec("no-such-instance").is_none());
+        unsafe { std::env::remove_var("TINYAWS_INSTANCES_DIR") };
+    }
+}

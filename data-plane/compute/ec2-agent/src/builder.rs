@@ -193,3 +193,87 @@ fn run_cmd(prog: &str, args: &[&str]) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_full_buildfile() {
+        let content = "\
+base: ubuntu
+packages: python3 pip curl
+run: pip install flask
+run: pip install gunicorn
+start: python3 app.py
+";
+        let spec = BuildSpec::parse(content);
+        assert_eq!(spec.base, "ubuntu");
+        assert_eq!(spec.packages, vec!["python3", "pip", "curl"]);
+        assert_eq!(spec.run, vec!["pip install flask", "pip install gunicorn"]);
+        assert_eq!(spec.start, "python3 app.py");
+    }
+
+    #[test]
+    fn parse_empty() {
+        let spec = BuildSpec::parse("");
+        assert_eq!(spec.base, "");
+        assert!(spec.packages.is_empty());
+        assert!(spec.run.is_empty());
+        assert_eq!(spec.start, "");
+    }
+
+    #[test]
+    fn parse_comments_and_blanks() {
+        let content = "\
+# this is a comment
+base: alpine
+
+# another comment
+packages: git
+";
+        let spec = BuildSpec::parse(content);
+        assert_eq!(spec.base, "alpine");
+        assert_eq!(spec.packages, vec!["git"]);
+    }
+
+    #[test]
+    fn parse_unknown_keys_ignored() {
+        let content = "base: debian\nfoo: bar\npackages: vim\n";
+        let spec = BuildSpec::parse(content);
+        assert_eq!(spec.base, "debian");
+        assert_eq!(spec.packages, vec!["vim"]);
+    }
+
+    #[test]
+    fn parse_multiple_run_lines() {
+        let content = "run: echo a\nrun: echo b\nrun: echo c\n";
+        let spec = BuildSpec::parse(content);
+        assert_eq!(spec.run.len(), 3);
+        assert_eq!(spec.run[0], "echo a");
+        assert_eq!(spec.run[2], "echo c");
+    }
+
+    #[test]
+    fn parse_start_only() {
+        let content = "start: node server.js\n";
+        let spec = BuildSpec::parse(content);
+        assert_eq!(spec.start, "node server.js");
+        assert_eq!(spec.base, "");
+        assert!(spec.packages.is_empty());
+    }
+
+    #[test]
+    fn content_hash_stable() {
+        let a = BuildSpec::parse("base: ubuntu\npackages: python3\nrun: echo hi\n");
+        let b = BuildSpec::parse("base: ubuntu\npackages: python3\nrun: echo hi\n");
+        assert_eq!(a.content_hash(), b.content_hash());
+    }
+
+    #[test]
+    fn content_hash_differs() {
+        let a = BuildSpec::parse("base: ubuntu\n");
+        let b = BuildSpec::parse("base: alpine\n");
+        assert_ne!(a.content_hash(), b.content_hash());
+    }
+}

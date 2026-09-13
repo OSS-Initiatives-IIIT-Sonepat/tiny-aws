@@ -99,3 +99,59 @@ fn handle_request(method: &str, path: &str, body: &str, node_json: &str) -> (&'s
         _ => ("404 Not Found", r#"{"error":"not found"}"#.into()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn health_returns_200() {
+        let (status, body) = handle_request("GET", "/health", "", "{}");
+        assert_eq!(status, "200 OK");
+        assert!(body.contains("healthy"));
+        assert!(body.contains("ec2-agent"));
+    }
+
+    #[test]
+    fn health_is_valid_json() {
+        let (_, body) = handle_request("GET", "/health", "", "{}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["status"], "healthy");
+        assert_eq!(v["service"], "ec2-agent");
+    }
+
+    #[test]
+    fn info_returns_node_json() {
+        let node_json = r#"{"id":"n1","system":{}}"#;
+        let (status, body) = handle_request("GET", "/info", "", node_json);
+        assert_eq!(status, "200 OK");
+        assert_eq!(body, node_json);
+    }
+
+    #[test]
+    fn unknown_path_returns_404() {
+        let (status, body) = handle_request("GET", "/nope", "", "{}");
+        assert_eq!(status, "404 Not Found");
+        assert!(body.contains("not found"));
+    }
+
+    #[test]
+    fn unknown_method_returns_404() {
+        let (status, _) = handle_request("PUT", "/health", "", "{}");
+        assert_eq!(status, "404 Not Found");
+    }
+
+    #[test]
+    fn provision_bad_json_returns_400() {
+        let (status, body) = handle_request("POST", "/instances/i-1/provision", "not json", "{}");
+        assert_eq!(status, "400 Bad Request");
+        assert!(body.contains("error"));
+    }
+
+    #[test]
+    fn delete_instance_returns_204() {
+        let (status, body) = handle_request("DELETE", "/instances/i-1", "", "{}");
+        assert_eq!(status, "204 No Content");
+        assert!(body.is_empty());
+    }
+}

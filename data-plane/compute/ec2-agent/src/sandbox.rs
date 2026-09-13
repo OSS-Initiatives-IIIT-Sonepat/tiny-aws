@@ -251,3 +251,100 @@ pub fn cleanup_cgroup(job_id: &str) {
     #[cfg(not(unix))]
     { let _ = job_id; }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn enabled_defaults_true_on_unix() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::remove_var("TINYAWS_SANDBOX") };
+        // on unix default is true; on non-unix always false
+        #[cfg(unix)]
+        assert!(enabled());
+        #[cfg(not(unix))]
+        assert!(!enabled());
+    }
+
+    #[test]
+    fn enabled_disabled_by_env() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::set_var("TINYAWS_SANDBOX", "0") };
+        #[cfg(unix)]
+        assert!(!enabled());
+        #[cfg(not(unix))]
+        assert!(!enabled());
+        unsafe { std::env::remove_var("TINYAWS_SANDBOX") };
+    }
+
+    #[test]
+    fn enabled_explicit_one() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::set_var("TINYAWS_SANDBOX", "1") };
+        #[cfg(unix)]
+        assert!(enabled());
+        unsafe { std::env::remove_var("TINYAWS_SANDBOX") };
+    }
+
+    #[test]
+    fn seccomp_profile_path_explicit_env_nonexistent() {
+        let _g = ENV_LOCK.lock().unwrap();
+        // point at a path that doesn't exist — should fall through
+        unsafe { std::env::set_var("TINYAWS_SECCOMP_PROFILE", "/no/such/file.json") };
+        let result = seccomp_profile_path();
+        // the explicit path doesn't exist, so it won't be returned via that branch
+        // result depends on whether the exe-relative or system path exists
+        // just verify it doesn't return the nonexistent explicit path
+        if let Some(ref p) = result {
+            assert_ne!(p, "/no/such/file.json");
+        }
+        unsafe { std::env::remove_var("TINYAWS_SECCOMP_PROFILE") };
+    }
+
+    #[test]
+    fn seccomp_profile_path_no_env() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::remove_var("TINYAWS_SECCOMP_PROFILE") };
+        // result is None or a real path — just confirm no panic
+        let _ = seccomp_profile_path();
+    }
+
+    #[test]
+    fn wrap_command_passthrough_when_disabled() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::set_var("TINYAWS_SANDBOX", "0") };
+        let (_prog, _args) = wrap_command("echo", &["hello"]);
+        #[cfg(unix)]
+        {
+            assert_eq!(_prog, "echo");
+            assert_eq!(_args, vec!["hello"]);
+        }
+        unsafe { std::env::remove_var("TINYAWS_SANDBOX") };
+    }
+
+    #[test]
+    fn wrap_command_uses_unshare_when_enabled() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::set_var("TINYAWS_SANDBOX", "1") };
+        let (_prog, _args) = wrap_command("echo", &["hello"]);
+        #[cfg(unix)]
+        {
+            assert_eq!(_prog, "unshare");
+            assert!(_args.contains(&"--pid".to_string()));
+            assert!(_args.contains(&"echo".to_string()));
+        }
+        unsafe { std::env::remove_var("TINYAWS_SANDBOX") };
+    }
+
+    #[test]
+    fn prepare_overlay_creates_path() {
+        let scratch = prepare_overlay("test-job-1234");
+        assert!(scratch.to_string_lossy().contains("test-job-1234"));
+        // cleanup
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+}

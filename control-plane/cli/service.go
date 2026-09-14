@@ -107,7 +107,7 @@ func serviceLogs(id string) {
 	}
 	defer logResp.Body.Close()
 	if logResp.StatusCode == 404 {
-		fmt.Println("(no logs yet — service may still be starting)")
+		fmt.Println("no logs available yet")
 		return
 	}
 	io.Copy(os.Stdout, logResp.Body)

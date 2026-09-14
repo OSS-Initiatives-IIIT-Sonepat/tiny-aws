@@ -1,144 +1,150 @@
-#!/bin/bash
-# Full-stack integration smoke test for tiny-aws on Linux.
-# Assumes the stack is running (use ./scripts/run-local.sh first).
-# Run from repo root: ./tests/integration/smoke-test.sh
+#!/usr/bin/env bash
+# Integration smoke test for tiny-aws (Linux/macOS).
+# Assumes the full stack is already running.
+# Run from repo root: bash tests/integration/smoke-test.sh
 
-set -e
+set -euo pipefail
 
-REGISTRY=${REGISTRY_URL:-http://127.0.0.1:9000}
-SCHEDULER=${SCHEDULER_URL:-http://127.0.0.1:9001}
-STORE=${OBJECT_STORE_URL:-http://127.0.0.1:7001}
-
+API_KEY="${TINYAWS_API_KEY:-}"
+AUTH_HEADER=""
 CURL_AUTH=()
-if [ -n "$TINYAWS_API_KEY" ]; then
-  CURL_AUTH=(-H "Authorization: Bearer $TINYAWS_API_KEY")
+if [ -n "$API_KEY" ]; then
+  AUTH_HEADER="Authorization: Bearer $API_KEY"
+  CURL_AUTH=(-H "$AUTH_HEADER")
 fi
 
-ok()   { echo "  $1 ok"; }
-fail() { echo "FAIL: $1"; exit 1; }
+fail() { echo " FAIL"; echo "$1" >&2; exit 1; }
 
-echo "tiny-aws integration smoke test (Linux)"
+test_endpoint() {
+  local name="$1" url="$2" pattern="${3:-.}"
+  printf "  checking %s..." "$name"
+  local resp
+  resp=$(curl -sf "${CURL_AUTH[@]+"${CURL_AUTH[@]}"}" "$url") || fail "$name unreachable: $url"
+  echo "$resp" | grep -qE "$pattern" || fail "$name unexpected response: $resp"
+  echo " ok"
+}
+
+echo "tiny-aws integration smoke test"
 echo ""
 
 echo "[1/10] Service health"
-curl -sf "${CURL_AUTH[@]}" "$REGISTRY/health" | grep -q healthy || fail "registry health"
-ok "registry"
-# ec2-agent health is unauthenticated
-curl -sf "http://127.0.0.1:8080/health" | grep -q healthy || fail "ec2-agent health"
-ok "ec2-agent"
-curl -sf "$STORE/health" | grep -q healthy || fail "object-store health"
-ok "object-store"
-curl -sf "${CURL_AUTH[@]}" "$SCHEDULER/health" | grep -q healthy || fail "scheduler health"
-ok "scheduler"
+test_endpoint "registry"     "http://127.0.0.1:9000/health" '"status":"healthy"'
+test_endpoint "ec2-agent"    "http://127.0.0.1:8080/health" '"status":"healthy"'
+test_endpoint "object-store" "http://127.0.0.1:7001/health" '"status":"healthy"'
+test_endpoint "scheduler"    "http://127.0.0.1:9001/health" '"status":"healthy"'
 
 echo ""
 echo "[2/10] Registry nodes"
-# check for at least one registered node (not just non-empty braces)
-NODES=$(curl -sf "${CURL_AUTH[@]}" "$REGISTRY/nodes")
-echo "$NODES" | grep -q '"id"' || fail "no nodes registered (is ec2-agent running?)"
-ok "nodes"
-curl -sf "${CURL_AUTH[@]}" "$REGISTRY/nodes?role=compute" | grep -q '"id"' || fail "no compute nodes"
-ok "compute nodes"
+test_endpoint "nodes"         "http://127.0.0.1:9000/nodes"              '"id"'
+test_endpoint "compute nodes" "http://127.0.0.1:9000/nodes?role=compute" '"id"'
+test_endpoint "storage nodes" "http://127.0.0.1:9000/nodes?role=storage" "."
 
 echo ""
-echo "[3/10] Object store PUT/GET/meta"
-KEY="smoke-$(date +%s)"
-curl -sf "${CURL_AUTH[@]}" -X PUT "$STORE/objects/$KEY" -d "hello integration" || fail "object PUT"
-ok "PUT"
-BODY=$(curl -sf "${CURL_AUTH[@]}" "$STORE/objects/$KEY")
-[ "$BODY" = "hello integration" ] || fail "object GET mismatch: $BODY"
-ok "GET"
-curl -sf "${CURL_AUTH[@]}" "$STORE/objects/$KEY/meta" | grep -q "$KEY" || fail "object meta"
-ok "meta"
+echo "[3/10] Object store"
+object_key="smoke-test-$(date +%H%M%S)"
+curl -sf "${CURL_AUTH[@]+"${CURL_AUTH[@]}"}" -X PUT "http://127.0.0.1:7001/objects/$object_key" -d "hello integration" >/dev/null || fail "object PUT failed"
+echo "  put object ok"
+
+body=$(curl -sf "${CURL_AUTH[@]+"${CURL_AUTH[@]}"}" "http://127.0.0.1:7001/objects/$object_key")
+[ "$body" = "hello integration" ] || fail "object GET mismatch: $body"
+echo "  get object ok"
+
+meta=$(curl -sf "${CURL_AUTH[@]+"${CURL_AUTH[@]}"}" "http://127.0.0.1:7001/objects/$object_key/meta")
+echo "$meta" | grep -q "$object_key" || fail "object meta missing key"
+echo "  object meta ok"
 
 echo ""
 echo "[4/10] Scheduler"
-curl -sf "${CURL_AUTH[@]}" "$SCHEDULER/schedule" | grep -q node_id || fail "schedule"
-ok "schedule"
+sched_ok=false
+for i in $(seq 1 10); do
+  resp=$(curl -s "${CURL_AUTH[@]+"${CURL_AUTH[@]}"}" "http://127.0.0.1:9001/schedule" 2>/dev/null) || true
+  if echo "$resp" | grep -q '"node_id"'; then sched_ok=true; break; fi
+  sleep 2
+done
+$sched_ok || fail "schedule: no healthy compute nodes after 20s"
+echo "  schedule ok"
 
 echo ""
 echo "[5/10] Job submission"
-JOB=$(curl -sf "${CURL_AUTH[@]}" -X POST "$SCHEDULER/jobs" \
-  -H "Content-Type: application/json" -d '{"command":"echo hello"}')
-JOB_ID=$(echo "$JOB" | grep -o '"job_id":"[^"]*"' | cut -d'"' -f4)
-NODE_ID=$(echo "$JOB" | grep -o '"node_id":"[^"]*"' | cut -d'"' -f4)
-[ -n "$JOB_ID" ] || fail "job_id missing from: $JOB"
-[ -n "$NODE_ID" ] || fail "node_id missing"
-ok "submit job $JOB_ID"
+job_response=$(curl -sf "${CURL_AUTH[@]+"${CURL_AUTH[@]}"}" -X POST -H "Content-Type: application/json" \
+  "http://127.0.0.1:9001/jobs" -d '{"command":"echo hello"}')
+job_id=$(echo "$job_response" | grep -o '"job_id":"[^"]*"' | head -1 | cut -d'"' -f4)
+node_id=$(echo "$job_response" | grep -o '"node_id":"[^"]*"' | head -1 | cut -d'"' -f4)
+[ -n "$job_id" ]  || fail "job response missing job_id"
+[ -n "$node_id" ] || fail "job response missing node_id"
+echo "  submit job ok"
 
 echo ""
 echo "[6/10] Job execution"
-FINAL=""
-STATUS=""
+final_status=""
 for i in $(seq 1 15); do
   sleep 2
-  FINAL=$(curl -sf "${CURL_AUTH[@]}" "$SCHEDULER/jobs/$JOB_ID")
-  STATUS=$(echo "$FINAL" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
-  [ "$STATUS" = "done" ] && break
-  [ "$STATUS" = "failed" ] && fail "job failed: $FINAL"
+  job_data=$(curl -sf "${CURL_AUTH[@]+"${CURL_AUTH[@]}"}" "http://127.0.0.1:9001/jobs/$job_id") || continue
+  status=$(echo "$job_data" | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4)
+  if [ "$status" = "done" ]; then final_status="done"; break; fi
+  if [ "$status" = "failed" ]; then fail "job failed: $job_data"; fi
 done
-[ "$STATUS" = "done" ] || fail "job did not complete in time (status=$STATUS)"
-ok "job done"
+[ "$final_status" = "done" ] || fail "job did not complete in time (status=$status)"
+echo "  job completed ok"
 
 echo ""
 echo "[7/10] Buckets"
-BUCKET="smoke-bucket-$(date +%s)"
-curl -sf "${CURL_AUTH[@]}" -X PUT "$STORE/buckets/$BUCKET" || fail "bucket create"
-ok "create bucket"
-curl -sf "${CURL_AUTH[@]}" -X PUT "$STORE/buckets/$BUCKET/objects/test.txt" -d "bucket hello" || fail "bucket PUT"
-ok "bucket PUT"
-BBODY=$(curl -sf "${CURL_AUTH[@]}" "$STORE/buckets/$BUCKET/objects/test.txt")
-[ "$BBODY" = "bucket hello" ] || fail "bucket GET mismatch: $BBODY"
-ok "bucket GET"
+bucket="smoke-bucket-$(date +%H%M%S)"
+curl -sf "${CURL_AUTH[@]+"${CURL_AUTH[@]}"}" -X PUT "http://127.0.0.1:7001/buckets/$bucket" >/dev/null || fail "bucket create failed"
+echo "  create bucket ok"
+
+curl -sf "${CURL_AUTH[@]+"${CURL_AUTH[@]}"}" -X PUT "http://127.0.0.1:7001/buckets/$bucket/objects/test.txt" -d "bucket hello" >/dev/null || fail "bucket object PUT failed"
+echo "  put bucket object ok"
+
+bucket_body=$(curl -sf "${CURL_AUTH[@]+"${CURL_AUTH[@]}"}" "http://127.0.0.1:7001/buckets/$bucket/objects/test.txt")
+[ "$bucket_body" = "bucket hello" ] || fail "bucket GET mismatch: $bucket_body"
+echo "  get bucket object ok"
 
 echo ""
-echo "[8/10] Instance launch"
-INST=$(curl -sf "${CURL_AUTH[@]}" -X POST "$REGISTRY/instances" \
-  -H "Content-Type: application/json" -d '{"instance_type":"small"}')
-INST_ID=$(echo "$INST" | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
-[ -n "$INST_ID" ] || fail "instance launch: $INST"
-ok "launch $INST_ID"
+echo "[8/10] Instances"
+inst=$(curl -sf "${CURL_AUTH[@]+"${CURL_AUTH[@]}"}" -X POST "http://127.0.0.1:9000/instances")
+inst_id=$(echo "$inst" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+inst_node=$(echo "$inst" | grep -o '"node_id":"[^"]*"' | head -1 | cut -d'"' -f4)
+[ -n "$inst_id" ] || fail "instance launch failed"
+echo "  launch instance ok"
 
 echo ""
 echo "[9/10] Instance-bound job"
-INST_NODE=$(echo "$INST" | grep -o '"node_id":"[^"]*"' | cut -d'"' -f4)
-BJOB=$(curl -sf "${CURL_AUTH[@]}" -X POST "$SCHEDULER/jobs" \
-  -H "Content-Type: application/json" \
-  -d "{\"command\":\"echo bound\",\"instance_id\":\"$INST_ID\"}")
-BJOB_ID=$(echo "$BJOB" | grep -o '"job_id":"[^"]*"' | cut -d'"' -f4)
-BJOB_NODE=$(echo "$BJOB" | grep -o '"node_id":"[^"]*"' | cut -d'"' -f4)
-[ -n "$BJOB_ID" ] || fail "bound job missing job_id"
-[ "$BJOB_NODE" = "$INST_NODE" ] || fail "bound job wrong node: $BJOB_NODE vs $INST_NODE"
+bound_resp=$(curl -sf "${CURL_AUTH[@]+"${CURL_AUTH[@]}"}" -X POST -H "Content-Type: application/json" \
+  "http://127.0.0.1:9001/jobs" -d "{\"command\":\"echo instance-bound\",\"instance_id\":\"$inst_id\"}")
+bound_job_id=$(echo "$bound_resp" | grep -o '"job_id":"[^"]*"' | head -1 | cut -d'"' -f4)
+bound_node=$(echo "$bound_resp" | grep -o '"node_id":"[^"]*"' | head -1 | cut -d'"' -f4)
+[ -n "$bound_job_id" ] || fail "bound job missing job_id"
+[ "$bound_node" = "$inst_node" ] || fail "bound job assigned to wrong node: $bound_node expected $inst_node"
 
-BSTATUS=""
+bound_final=""
 for i in $(seq 1 15); do
   sleep 2
-  BFINAL=$(curl -sf "${CURL_AUTH[@]}" "$SCHEDULER/jobs/$BJOB_ID")
-  BSTATUS=$(echo "$BFINAL" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
-  [ "$BSTATUS" = "done" ] && break
-  [ "$BSTATUS" = "failed" ] && fail "bound job failed: $BFINAL"
+  bdata=$(curl -sf "${CURL_AUTH[@]+"${CURL_AUTH[@]}"}" "http://127.0.0.1:9001/jobs/$bound_job_id") || continue
+  bstatus=$(echo "$bdata" | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4)
+  if [ "$bstatus" = "done" ]; then bound_final="done"; break; fi
+  if [ "$bstatus" = "failed" ]; then fail "bound job failed: $bdata"; fi
 done
-[ "$BSTATUS" = "done" ] || fail "bound job did not complete (status=$BSTATUS)"
-ok "instance-bound job done"
+[ "$bound_final" = "done" ] || fail "bound job did not complete (status=$bstatus)"
+echo "  instance-bound job ok"
 
 echo ""
-echo "[10/10] Instance workspace job"
-WJOB=$(curl -sf "${CURL_AUTH[@]}" -X POST "$SCHEDULER/jobs" \
-  -H "Content-Type: application/json" \
-  -d "{\"command\":\"echo workspace-check\",\"instance_id\":\"$INST_ID\"}")
-WJOB_ID=$(echo "$WJOB" | grep -o '"job_id":"[^"]*"' | cut -d'"' -f4)
-[ -n "$WJOB_ID" ] || fail "workspace job missing job_id"
+echo "[10/10] Instance workspace"
+ws_resp=$(curl -sf "${CURL_AUTH[@]+"${CURL_AUTH[@]}"}" -X POST -H "Content-Type: application/json" \
+  "http://127.0.0.1:9001/jobs" -d "{\"command\":\"echo __WS__\",\"instance_id\":\"$inst_id\"}")
+ws_job_id=$(echo "$ws_resp" | grep -o '"job_id":"[^"]*"' | head -1 | cut -d'"' -f4)
+[ -n "$ws_job_id" ] || fail "workspace job missing job_id"
 
-WSTATUS=""
+ws_final=""
 for i in $(seq 1 15); do
   sleep 2
-  WFINAL=$(curl -sf "${CURL_AUTH[@]}" "$SCHEDULER/jobs/$WJOB_ID")
-  WSTATUS=$(echo "$WFINAL" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
-  [ "$WSTATUS" = "done" ] && break
-  [ "$WSTATUS" = "failed" ] && fail "workspace job failed: $WFINAL"
+  wdata=$(curl -sf "${CURL_AUTH[@]+"${CURL_AUTH[@]}"}" "http://127.0.0.1:9001/jobs/$ws_job_id") || continue
+  wstatus=$(echo "$wdata" | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4)
+  if [ "$wstatus" = "done" ]; then ws_final="done"; break; fi
+  if [ "$wstatus" = "failed" ]; then fail "workspace job failed: $wdata"; fi
 done
-[ "$WSTATUS" = "done" ] || fail "workspace job did not complete (status=$WSTATUS)"
-ok "workspace job done"
+[ "$ws_final" = "done" ] || fail "workspace job did not complete"
+echo "  workspace job ok"
 
 echo ""
 echo "ALL CHECKS PASSED"

@@ -117,3 +117,55 @@ async fn apply_rule_linux(rule: &SGRule) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_sg_rule() {
+        let json = r#"{
+            "id": "r-1",
+            "direction": "inbound",
+            "action": "allow",
+            "protocol": "tcp",
+            "port": 443,
+            "cidr": "0.0.0.0/0"
+        }"#;
+        let rule: SGRule = serde_json::from_str(json).unwrap();
+        assert_eq!(rule.id, "r-1");
+        assert_eq!(rule.direction, "inbound");
+        assert_eq!(rule.action, "allow");
+        assert_eq!(rule.protocol, "tcp");
+        assert_eq!(rule.port, 443);
+        assert_eq!(rule.cidr, "0.0.0.0/0");
+    }
+
+    #[test]
+    fn deserialize_sg_rule_defaults() {
+        // direction is optional (serde default)
+        let json = r#"{
+            "id": "r-2",
+            "action": "deny",
+            "protocol": "*",
+            "port": 0,
+            "cidr": "10.0.0.0/8"
+        }"#;
+        let rule: SGRule = serde_json::from_str(json).unwrap();
+        assert_eq!(rule.direction, ""); // default empty string
+        assert_eq!(rule.protocol, "*");
+    }
+
+    #[test]
+    fn networking_url_default() {
+        // When env is unset, should return the default.
+        unsafe { std::env::remove_var("NETWORKING_URL") };
+        assert_eq!(networking_url(), "http://127.0.0.1:9005");
+    }
+
+    #[test]
+    fn sg_id_default_empty() {
+        unsafe { std::env::remove_var("SG_ID") };
+        assert_eq!(sg_id(), "");
+    }
+}

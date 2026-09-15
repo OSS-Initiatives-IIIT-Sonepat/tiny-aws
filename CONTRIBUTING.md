@@ -57,6 +57,23 @@ ci: CI change
 4. Add a build step in `.github/workflows/ci.yml`.
 5. Document the port in `docs/architecture/overview.md`.
 
+## Running Tests
+
+```bash
+# Run all Go tests
+./scripts/test-go.sh
+
+# Run Rust tests
+cargo test
+```
+
+Individual Go modules can be tested directly:
+
+```bash
+cd control-plane/registry && go test ./...
+cd control-plane/scheduler && go test ./...
+```
+
 ## Pull requests
 
 - One feature per PR.

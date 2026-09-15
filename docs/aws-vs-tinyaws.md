@@ -11,21 +11,50 @@ This doc walks through each service and honestly compares them.
 
 ---
 
-## The 30-second version
+## The scale difference (let's get this out of the way)
 
-| What you want | AWS | tiny-aws |
+| | AWS | tiny-aws |
 |---|---|---|
-| Run a server | EC2 (Xen/Nitro VMs) | `tinyaws instance launch` (systemd-nspawn containers) |
-| Store files | S3 (distributed object store) | Object store (C++ block engine + Rust HTTP) |
-| Run a function | Lambda (Firecracker microVMs) | Lambda runtime (scheduler job in a container) |
-| Queue messages | SQS (distributed queue) | SQS (SQLite-backed queue, single node) |
-| Pub/sub events | SNS (fan-out) | SNS (HTTP fan-out, SQLite subscriptions) |
-| Load balance | ELB/ALB | Load balancer (round-robin reverse proxy) |
-| Private network | VPC | VPC (metadata in SQLite, no real isolation yet) |
-| Firewall rules | Security Groups | Security groups (iptables/netsh rules) |
-| Auth | IAM (policies, roles, SAML, OIDC) | IAM (api_keys table, admin/readonly roles) |
-| CLI | `aws` CLI | `tinyaws` CLI |
-| API gateway | API Gateway | API gateway (reverse proxy, strips /v1) |
+| **Engineers** | ~60,000+ (Amazon's cloud division) | A few students at IIIT Sonepat |
+| **Codebase size** | Hundreds of millions of lines (estimated) | ~8,500 lines of production code |
+| **Services** | 200+ (EC2, S3, RDS, DynamoDB, Kinesis, Redshift...) | 12 (registry, scheduler, agent, object store, SQS, SNS, VPC, LB, Lambda, controller, metadata, API gateway) |
+| **Data centers** | 33 regions, 105 availability zones, millions of servers | Your one Linux box. Maybe three if you're feeling ambitious. |
+| **Revenue** | ~$100 billion/year | $0. It's free. MIT license. |
+| **Languages** | Java, C++, Rust, Go, Python, internal tools... | Go (~5,000 LOC), Rust (~3,300 LOC), C++ (~220 LOC) |
+| **Uptime SLA** | 99.99% (contractual, with financial penalties) | "Hopefully it doesn't crash" |
+| **Cost to run** | $5/month for a t3.micro, scaling to millions | $0 (your electricity bill) |
+| **Test count** | Unknown (probably millions) | 323 unit tests + 17 integration scripts |
+| **First release** | 2006 (S3), 2006 (EC2) | 2026 (a month ago) |
+| **Customers** | Millions of businesses, governments, startups | Students learning how clouds work |
+
+It's not a fair comparison. It's not meant to be. tiny-aws exists so you can
+understand what those 60,000 engineers are building.
+
+---
+
+## The 30-second service map
+
+| What you want | AWS | tiny-aws | Lines in tiny-aws |
+|---|---|---|---|
+| Run a server | EC2 (Xen/Nitro VMs) | `tinyaws instance launch` (nspawn containers) | ~1,500 (Rust agent) |
+| Store files | S3 (distributed object store) | Object store (C++ engine + Rust HTTP) | ~1,200 (Rust + C++) |
+| Schedule work | ECS / internal placement | Scheduler | ~600 (Go) |
+| Service registry | Internal (not public) | Registry | ~500 (Go) |
+| Run a function | Lambda (Firecracker microVMs) | Lambda runtime | ~236 (Go) |
+| Queue messages | SQS (distributed queue) | SQS (SQLite queue) | ~187 (Go) |
+| Pub/sub events | SNS (fan-out) | SNS (HTTP fan-out) | ~175 (Go) |
+| Load balance | ELB/ALB/NLB | Load balancer (round-robin proxy) | ~180 (Go) |
+| Private network | VPC (SDN + custom hardware) | VPC (metadata only, SQLite) | ~280 (Go) |
+| Firewall rules | Security Groups (Nitro-enforced) | Security groups (iptables/netsh) | ~60 (Go + Rust agent) |
+| Auth | IAM (policies, roles, SAML, OIDC...) | IAM (api_keys table, 2 roles) | ~80 (Go) |
+| Workspace cleanup | Internal lifecycle mgmt | Controller | ~80 (Go) |
+| Resource aggregation | CloudWatch / Resource Explorer | Metadata service | ~60 (Go) |
+| Unified API | API Gateway (REST/HTTP/WebSocket) | API gateway (reverse proxy) | ~60 (Go) |
+| CLI | `aws` (Python, ~2M lines with SDKs) | `tinyaws` (Go, ~800 lines) | ~800 (Go) |
+| Network enforcement | VPC flow logs, NACLs | Network agent (iptables writer) | ~100 (Rust) |
+
+AWS has ~200 services. tiny-aws has 12. But those 12 cover the foundational
+layer that everything else in AWS is built on top of.
 
 ---
 
@@ -44,34 +73,43 @@ The isolation is hardware-enforced. One EC2 instance literally cannot see anothe
 instance's memory, even if they're on the same physical machine. That's the
 whole point.
 
+EC2 has hundreds of instance types: general purpose (m5, m6i, m7g), compute
+optimized (c5, c6g), memory optimized (r5, x2idn), storage optimized (i3, d3),
+GPU (p4d, g5), and more. Prices range from $0.0042/hr (t4g.nano) to $32.77/hr
+(p4d.24xlarge).
+
 ### How tiny-aws does it
 
 tiny-aws uses `systemd-nspawn` — Linux's built-in container runtime. When you
-run `tinyaws instance launch`, the agent calls `unshare` to create new PID and
-mount namespaces, sets up an overlayfs (so each instance gets its own writable
-filesystem on top of a shared base image), does a `pivot_root` to make the
-container think its filesystem is the only one, applies cgroup v2 limits for CPU
-and memory, and loads a seccomp profile to restrict dangerous syscalls.
+run `tinyaws instance launch`, the agent:
+
+1. Calls `unshare(CLONE_NEWPID | CLONE_NEWNS)` to create new PID and mount namespaces
+2. Sets up an overlayfs (writable layer on top of a shared base image)
+3. Does `pivot_root` to make the container think its filesystem is the only one
+4. Writes cgroup v2 limits to `/sys/fs/cgroup` for CPU and memory
+5. Loads a seccomp profile (JSON) to restrict dangerous syscalls
+6. Optionally creates a veth pair for network isolation
 
 It's not a VM. There's no separate kernel. But the isolation is real enough that
-you can run `apt install` inside an instance without affecting the host, and the
-cgroup limits mean one instance can't eat all the machine's RAM.
+you can run `apt install` inside an instance without affecting the host.
 
-### What's honestly different
+### The numbers
 
-- **Isolation level.** EC2 gives you hardware-level isolation (a hypervisor). tiny-aws
-  gives you OS-level isolation (namespaces + cgroups). A kernel exploit could
-  escape a tiny-aws container. It can't escape a Nitro VM.
-- **Scale.** EC2 has millions of physical servers across dozens of regions.
-  tiny-aws has your one Linux box. Maybe three if you're feeling fancy.
-- **Instance types.** EC2 has hundreds (m5.xlarge, c6g.medium, p4d.24xlarge...).
-  tiny-aws has five: nano, micro, small, medium, large. They just set different
-  cgroup CPU/memory limits.
-- **Boot time.** EC2 takes 30-90 seconds. tiny-aws containers start in under a
-  second because there's no kernel to boot.
-- **Networking.** EC2 instances get real virtual NICs with real IPs. tiny-aws
-  instances share the host's network (with optional veth pairs for basic
-  isolation).
+| | AWS EC2 | tiny-aws instances |
+|---|---|---|
+| Isolation | Hardware VM (Nitro hypervisor) | OS containers (namespaces + cgroups) |
+| Instance types | 500+ (t3.micro to p4d.24xlarge) | 5 (nano, micro, small, medium, large) |
+| Boot time | 30-90 seconds | <1 second |
+| Max memory | 24 TB (u-24tb1.metal) | Whatever your machine has |
+| Max vCPUs | 448 (u7in-32tb.224xlarge) | Whatever your machine has |
+| Regions | 33 | 1 (your house) |
+| Base images | 100,000+ AMIs | Debian rootfs via debootstrap |
+| Live migration | Yes (transparent) | No |
+| Persistent storage | EBS volumes (replicated SSDs) | Host filesystem via overlayfs |
+| GPU support | Yes (NVIDIA, AMD, custom Inferentia) | No |
+| Nested virtualization | Yes | No (containers only) |
+| Cost | $0.004 - $32.77/hr | Free |
+| Code to implement | Millions of lines + custom hardware | ~1,500 lines of Rust |
 
 ### What's the same (conceptually)
 
@@ -81,8 +119,7 @@ info. The scheduler assigns instances to nodes just like EC2 places VMs on
 hosts. The agent heartbeats to the registry just like EC2 instances report to
 the control plane.
 
-If you understand tiny-aws instances, you understand the *shape* of EC2. You
-just don't understand the hypervisor or the hardware yet, and that's fine.
+If you understand tiny-aws instances, you understand the *shape* of EC2.
 
 ---
 
@@ -99,39 +136,81 @@ engine that writes to physical spinning disks and SSDs.
 
 You never see any of this. You just PUT an object and GET it back.
 
+S3 has versioning, lifecycle policies (auto-delete after N days, transition to
+cheaper storage), event notifications (trigger Lambda on upload), S3 Select
+(query CSV/JSON in place), transfer acceleration, cross-region replication,
+storage classes (Standard, Infrequent Access, Glacier, Deep Archive), and more.
+
 ### How tiny-aws does it
 
-tiny-aws has a C++ block engine that writes files to disk. A Rust HTTP server
-sits on top with axum, handling PUT/GET/DELETE. SQLite stores metadata (size,
-etag, content-type). Buckets are just path prefixes.
+tiny-aws has a C++ block engine (`block_store.cpp`, ~150 lines) that writes
+files to disk via raw `fstream`. A Rust HTTP server sits on top with axum,
+handling PUT/GET/DELETE/list. SQLite stores metadata (size, etag, content-type).
+Buckets are just path prefixes.
 
 Replication exists: when you set `REPLICATION_FACTOR=2`, writes go to multiple
 storage nodes (discovered from the registry). Reads fall back to peers if the
 local copy is missing. Deletes fan out too.
 
-### What's honestly different
+### The numbers
 
-- **Durability.** S3 promises 99.999999999% durability (eleven nines). tiny-aws
-  promises "your disk didn't fail." If the disk dies, your data is gone (unless
-  you set up replication across machines, and even then it's two copies, not
-  three).
-- **Consistency.** S3 is strongly consistent. tiny-aws is eventually consistent
-  with replication — a write to node A might not be visible on node B for a
-  moment.
-- **Scale.** S3 handles unlimited objects. tiny-aws handles "however many fit on
-  your disk."
-- **Features.** S3 has versioning, lifecycle policies, event notifications, S3
-  Select, transfer acceleration, storage classes... tiny-aws has PUT, GET,
-  DELETE, and list. That's it.
+| | AWS S3 | tiny-aws object store |
+|---|---|---|
+| Durability | 99.999999999% (eleven nines) | "Your disk didn't fail" |
+| Availability | 99.99% | "The process is running" |
+| Consistency | Strong (since Dec 2020) | Eventual (with replication) |
+| Max object size | 5 TB | Disk space |
+| Storage classes | 8 (Standard thru Deep Archive) | 1 |
+| Versioning | Yes | No |
+| Lifecycle policies | Yes | No |
+| Event notifications | Yes (Lambda, SQS, SNS) | No |
+| Encryption | SSE-S3, SSE-KMS, SSE-C | No |
+| Replication | Built-in, cross-region | Manual, same-region, configurable factor |
+| Access control | Bucket policies, ACLs, IAM | Bearer token (one key for all) |
+| Cost | $0.023/GB/month (Standard) | Free (your disk) |
+| Implementation | Millions of lines + custom hardware | ~1,200 lines (Rust + C++) |
 
 ### What's the same
 
 The API shape: PUT an object with a key, GET it back with the same key. Buckets
 as namespaces. Flat key structure (no real directories). ETags for content
-verification. Content-type metadata.
+verification. Content-type metadata. Bearer auth headers.
 
-If you build an app against tiny-aws's object store, porting it to S3 is mostly
-changing the URL and adding AWS auth headers.
+---
+
+## Scheduling and job execution
+
+### How AWS does it
+
+AWS doesn't expose its internal scheduler. But internally, when you launch an
+EC2 instance, a placement engine picks which physical host to put it on based on
+capacity, locality, spread constraints, and dedicated tenancy rules. ECS and
+EKS do visible scheduling for containers — bin-packing tasks onto EC2 instances
+based on CPU/memory requirements.
+
+### How tiny-aws does it
+
+The scheduler is a Go service (~600 lines) that:
+- Receives job submissions via POST /jobs
+- Queries the registry for healthy compute nodes
+- Round-robin picks a node (or targets a specific instance)
+- Stores the job in SQLite with status "pending"
+- Agents poll GET /jobs?node_id=X&status=pending every 3 seconds
+- Enforces MAX_JOBS_PER_NODE concurrency limit
+- Supports retry (once) on failure
+- Timeout watchdog marks stale running jobs as failed
+- Optionally polls an SQS queue for job submissions
+- Fires SNS notifications on job completion/failure
+
+| | AWS (internal + ECS) | tiny-aws scheduler |
+|---|---|---|
+| Algorithm | Bin-packing, spread, affinity rules | Round-robin |
+| Concurrency | Thousands of tasks per cluster | MAX_JOBS_PER_NODE (default 1) |
+| Retry | Configurable (ECS: up to 10) | Once |
+| Timeout | Configurable per task | JOB_TIMEOUT_SECS (default 3600) |
+| Queue integration | SQS, EventBridge | SQS (built-in polling) |
+| Job types | Tasks, services, cron | run (one-shot), service (long-running) |
+| Implementation | Proprietary | ~600 lines of Go |
 
 ---
 
@@ -140,42 +219,75 @@ changing the URL and adding AWS auth headers.
 ### How AWS does it
 
 SQS is a fully managed distributed queue. Messages are replicated across
-multiple servers. It supports standard queues (best-effort ordering, at-least-once
-delivery) and FIFO queues (exactly-once, strict ordering). Visibility timeout
-hides a message while a consumer processes it. Dead letter queues catch
-repeatedly-failed messages.
+multiple servers in multiple AZs. It supports standard queues (best-effort
+ordering, at-least-once delivery) and FIFO queues (exactly-once, strict
+ordering). Visibility timeout hides a message while a consumer processes it.
+Dead letter queues catch repeatedly-failed messages.
 
 SNS is pub/sub: publish a message to a topic, and it fans out to all
-subscribers (SQS queues, HTTP endpoints, email, Lambda, SMS).
+subscribers (SQS queues, HTTP endpoints, email, Lambda, SMS, mobile push).
 
 ### How tiny-aws does it
 
-SQS: a SQLite table of messages. Send inserts a row. Receive selects the
-oldest visible message and bumps its `visible_after` by 30 seconds. Delete
-marks it deleted. That's the whole thing.
+SQS: a SQLite table of messages (~187 lines of Go). Send inserts a row. Receive
+selects the oldest visible message and bumps its `visible_after` by 30 seconds.
+Delete marks it deleted. That's the whole thing.
 
-SNS: another SQLite table. Subscribe adds an endpoint URL to a topic. Publish
-does a goroutine fan-out — one HTTP POST per subscriber. If the POST fails,
-it logs an error and moves on (no retry).
+SNS: another SQLite table (~175 lines of Go). Subscribe adds an endpoint URL to
+a topic. Publish does a goroutine fan-out — one HTTP POST per subscriber. If the
+POST fails, it logs and moves on (best-effort, no retry).
 
-### What's honestly different
+### The numbers
 
-- **Reliability.** AWS SQS replicates across data centers. tiny-aws SQS is one
-  SQLite file on one disk.
-- **Delivery guarantees.** AWS SNS retries failed deliveries with exponential
-  backoff. tiny-aws SNS fires and forgets.
-- **Scale.** AWS handles billions of messages per day. tiny-aws handles as many
-  as SQLite can INSERT per second on your machine (which is actually a lot —
-  thousands per second).
-- **Features.** No FIFO, no dead letter queues, no message attributes, no
-  batching in tiny-aws.
+| | AWS SQS | tiny-aws SQS | AWS SNS | tiny-aws SNS |
+|---|---|---|---|---|
+| Queue types | Standard + FIFO | Standard only | - | - |
+| Delivery | At-least-once (std), exactly-once (FIFO) | At-least-once | Best-effort with retry | Best-effort, no retry |
+| Visibility timeout | Configurable (0s-12hr) | 30s (hardcoded) | - | - |
+| Dead letter queue | Yes | No | - | - |
+| Message size | 256 KB | SQLite TEXT (unlimited-ish) | 256 KB | Unlimited |
+| Subscribers | - | - | SQS, HTTP, Lambda, email, SMS | HTTP only |
+| Throughput | Unlimited (standard) | SQLite write speed (~thousands/s) | Unlimited | SQLite write speed |
+| Cost | $0.40 per million msgs | Free | $0.50 per million | Free |
+| Implementation | Proprietary distributed | ~187 lines Go + SQLite | Proprietary distributed | ~175 lines Go + SQLite |
 
-### What's the same
+---
 
-The concepts are 1:1. Create a queue, send messages, receive with visibility
-timeout, delete to acknowledge. Create a topic, subscribe an endpoint, publish
-to fan out. The scheduler even polls the SQS queue for job submissions, exactly
-like a real consumer pattern.
+## Load balancing: ELB vs load balancer
+
+### How AWS does it
+
+AWS has three load balancers:
+- **ALB** (Application Load Balancer): Layer 7, HTTP/HTTPS, path-based routing,
+  host-based routing, WebSocket support, sticky sessions
+- **NLB** (Network Load Balancer): Layer 4, TCP/UDP, millions of requests per
+  second, static IPs
+- **CLB** (Classic Load Balancer): Legacy, both L4 and L7
+
+All are fully managed, auto-scaling, multi-AZ, with health checks and SSL
+termination.
+
+### How tiny-aws does it
+
+A single Go service (~180 lines) that:
+- Polls the registry every 10 seconds for healthy compute nodes
+- Health-checks each agent's `/health` endpoint
+- Also discovers running services from the registry
+- Round-robin forwards HTTP requests to the next healthy target
+- Exposes `/targets` to see current backend list
+
+| | AWS ELB/ALB | tiny-aws LB |
+|---|---|---|
+| Layer | L4 (NLB) or L7 (ALB) | L7 (HTTP only) |
+| Algorithm | Round-robin, least connections, flow hash | Round-robin only |
+| Health checks | TCP, HTTP, HTTPS, gRPC | HTTP GET /health |
+| SSL termination | Yes (ACM certificates) | No |
+| Auto-scaling | Yes | No |
+| Sticky sessions | Yes | No |
+| WebSocket | Yes (ALB) | No |
+| Static IP | Yes (NLB) | Yes (your machine's IP) |
+| Cost | ~$16/month + data | Free |
+| Implementation | Proprietary + custom hardware | ~180 lines of Go |
 
 ---
 
@@ -188,26 +300,35 @@ VPC has real routing tables that control packet flow. Security groups are
 stateful firewalls enforced at the hypervisor level — they filter packets before
 they reach your instance.
 
-AWS does this with custom networking hardware (Nitro cards again) and SDN
-(software-defined networking) that programs physical switches.
+AWS does this with custom networking hardware (Nitro cards) and SDN
+(software-defined networking) that programs physical switches and routers.
+It handles ARP, DHCP, DNS, NAT, internet gateways, VPN connections, VPC
+peering, transit gateways, PrivateLink...
 
 ### How tiny-aws does it
 
-VPC in tiny-aws is metadata. You create a VPC with a CIDR block, subnets,
-security groups, and rules. It's all stored in SQLite. The network agent
-reads the security group rules and writes iptables (Linux) or netsh (Windows)
-rules.
+VPC in tiny-aws is metadata (~280 lines of Go). You create a VPC with a CIDR
+block, subnets, route tables, security groups, and rules. It's all stored in
+SQLite. The network agent (Rust, ~100 lines) reads the security group rules and
+writes iptables (Linux) or netsh (Windows) rules.
 
 But there's no real IP allocation, no real routing, no real packet filtering
 between instances. Two instances on the same machine can still talk to each
 other regardless of what the security group says (unless the iptables rules
 happen to block it at the host level).
 
-### What's honestly different
-
-- **Everything.** AWS VPC is real network infrastructure. tiny-aws VPC is a
-  database pretending to be a network. The CIDR blocks are strings, not routed
-  subnets.
+| | AWS VPC | tiny-aws VPC |
+|---|---|---|
+| IP allocation | Real (DHCP within CIDR) | Strings in SQLite |
+| Routing | Real (route tables, IGW, NAT) | Metadata only |
+| Security groups | Stateful, hypervisor-enforced | iptables/netsh rules (host-level) |
+| Subnets | Real, AZ-scoped | Metadata (CIDR strings) |
+| VPC peering | Yes | No |
+| VPN / Direct Connect | Yes | No |
+| Network ACLs | Yes (stateless) | No |
+| Flow logs | Yes | No |
+| DNS | Route 53 integration | No |
+| Implementation | Custom hardware + SDN | ~380 lines (Go + Rust) |
 
 ### What's the same
 
@@ -215,9 +336,6 @@ The API and the mental model. You create VPCs, subnets, security groups, rules
 with inbound/outbound directions and port/protocol/CIDR specifications. If you
 learn to think in these terms with tiny-aws, you'll understand the AWS
 networking console immediately.
-
-And that's the point. You're learning the *concepts*, not the kernel
-networking. The kernel networking is a semester-long course on its own.
 
 ---
 
@@ -228,29 +346,30 @@ networking. The kernel networking is a semester-long course on its own.
 AWS IAM is a beast. Users, groups, roles, policies (JSON documents specifying
 which actions on which resources are allowed or denied), temporary credentials
 via STS, cross-account access, identity federation via SAML and OIDC, permission
-boundaries, service control policies...
+boundaries, service control policies, session policies, resource-based
+policies...
 
-It's the most complicated part of AWS. People make careers out of understanding
-IAM.
+It's the most complicated part of AWS. People make entire careers out of
+understanding IAM. The policy language alone has its own evaluation logic with
+explicit deny > explicit allow > implicit deny.
 
 ### How tiny-aws does it
 
 A SQLite table called `api_keys` with three columns: `key`, `role`, `expires_at`.
 Two roles: `admin` (can do everything) and `readonly` (GET requests only). Set
-`TINYAWS_API_KEY` env var and all requests need a `Bearer` token.
+`TINYAWS_API_KEY` env var and all requests need a `Bearer` token. Keys can
+expire.
 
-That's it. No policies, no ARNs, no conditions, no cross-account anything.
-
-### What's honestly different
-
-Everything beyond "you need a credential to make API calls." AWS IAM is a
-policy engine. tiny-aws IAM is a key/value lookup.
-
-### What's the same
-
-The idea that every API call is authenticated and authorized. The idea that
-different principals have different permissions. The idea that credentials
-expire. These fundamentals carry over.
+| | AWS IAM | tiny-aws IAM |
+|---|---|---|
+| Principals | Users, groups, roles, federated identities | API keys |
+| Permissions | JSON policies (Allow/Deny per action per resource) | 2 roles: admin, readonly |
+| Temporary credentials | STS (AssumeRole, GetSessionToken) | expires_at field |
+| Cross-account | Yes | No |
+| Identity federation | SAML, OIDC, AWS SSO | No |
+| MFA | Yes | No |
+| Policy evaluation | 5-step logic with explicit deny | key lookup in SQLite |
+| Implementation | Proprietary (massive) | ~80 lines of Go |
 
 ---
 
@@ -264,30 +383,107 @@ downloading your code, setting up the language environment, and routing the
 event to your handler. Cold starts are the time to boot a new microVM; warm
 starts reuse an existing one.
 
+Lambda supports Python, Node.js, Java, C#, Go, Ruby, and custom runtimes.
+It scales automatically from zero to thousands of concurrent invocations.
+You pay per 1ms of compute time.
+
 ### How tiny-aws does it
 
-Lambda in tiny-aws stores function metadata in SQLite. When you invoke, it
-builds a shell command that downloads your code zip from the object store,
-extracts it, and calls your handler. This command is submitted as a scheduler
-job, which gets picked up by an agent and run.
+Lambda in tiny-aws (~236 lines of Go) stores function metadata in SQLite. When
+you invoke, it builds a shell command that downloads your code zip from the
+object store, extracts it, and calls your handler. This command is submitted as
+a scheduler job, which gets picked up by an agent and run.
 
 No microVM. No warm containers. Every invocation downloads and extracts the
-code fresh.
+code fresh. Handler and event are passed as environment variables (not shell
+interpolation — that was an injection risk that got fixed).
 
-### What's honestly different
+| | AWS Lambda | tiny-aws Lambda |
+|---|---|---|
+| Isolation | Firecracker microVM | Agent process (optionally sandboxed) |
+| Cold start | ~200ms | Download + unzip time (seconds) |
+| Warm start | ~1ms | Not supported (always cold) |
+| Runtimes | Python, Node, Java, C#, Go, Ruby, custom | Python 3, Node 20 |
+| Concurrency | 1,000+ (auto-scaling) | 1 (one agent job at a time) |
+| Max duration | 15 minutes | JOB_TIMEOUT_SECS (default 3600) |
+| Memory | 128 MB - 10 GB | No limit (host memory) |
+| Layers | Yes (shared dependencies) | No |
+| Triggers | API GW, S3, SQS, SNS, DynamoDB, 100+ | Manual invoke only |
+| Cost | $0.20 per 1M invocations + $0.0000166667/GB-s | Free |
+| Implementation | Firecracker + proprietary | ~236 lines of Go |
 
-- **Isolation.** AWS Lambda uses Firecracker (a VM). tiny-aws Lambda runs with
-  the agent's full privileges (sandboxed only if the agent has sandboxing
-  enabled).
-- **Performance.** AWS cold starts are ~200ms. tiny-aws cold starts are however
-  long it takes to download and unzip your code.
-- **Runtimes.** AWS supports many. tiny-aws supports Python 3 and Node 20.
+---
 
-### What's the same
+## The other services: controller, metadata, API gateway
 
-The workflow: upload code to a bucket, register the function with a handler name,
-invoke it, get the output back. The handler signature convention (event in,
-result out). The idea of FaaS.
+These don't have exact AWS equivalents that are user-facing, but they map to
+internal AWS infrastructure:
+
+### Controller (~80 lines of Go)
+Polls the registry every 15 seconds for terminated instances and removes their
+workspace directories. This is the same reconciliation loop that runs inside
+AWS to clean up after terminated instances — deleting EBS volumes, releasing
+IPs, removing ENIs. AWS does it across millions of resources. tiny-aws does it
+with `os.RemoveAll()`.
+
+### Metadata service (~60 lines of Go)
+Fans out to registry, scheduler, and networking to aggregate all resources into
+one response. Similar to AWS Resource Explorer or the EC2 instance metadata
+service (169.254.169.254). Except tiny-aws's version is 60 lines, not a
+distributed system.
+
+### API gateway (~60 lines of Go)
+A `httputil.ReverseProxy` that strips `/v1` and routes to backend services.
+AWS API Gateway is a full product: REST APIs, HTTP APIs, WebSocket APIs,
+throttling, caching, request/response transforms, authorization, usage plans.
+tiny-aws's version is literally "strip prefix, forward request."
+
+### Service deploy (long-running apps)
+AWS has ECS (Elastic Container Service) and EKS (Kubernetes) for running
+long-running services. tiny-aws has `--service --port 3000` on the deploy
+command, which spawns a detached process, registers it with the registry, and
+the load balancer discovers it. Same concept — service discovery + health
+checks + load balancing — at a tiny fraction of the complexity.
+
+---
+
+## What AWS has that tiny-aws doesn't (and probably never will)
+
+- **Databases as a service** (RDS, DynamoDB, Aurora, ElastiCache, Neptune, Redshift, DocumentDB)
+- **Container orchestration** (ECS, EKS, Fargate)
+- **CI/CD** (CodePipeline, CodeBuild, CodeDeploy)
+- **Monitoring** (CloudWatch, X-Ray, CloudTrail)
+- **CDN** (CloudFront)
+- **DNS** (Route 53)
+- **Email** (SES)
+- **Search** (OpenSearch, CloudSearch)
+- **ML/AI** (SageMaker, Bedrock, Rekognition, Textract...)
+- **IoT** (IoT Core, Greengrass)
+- **Blockchain** (QLDB, Managed Blockchain)
+- **Satellite** (Ground Station)
+- **Quantum computing** (Braket)
+- **200+ more services**
+
+tiny-aws has the foundation layer. AWS has the foundation plus twenty years of
+features on top.
+
+---
+
+## The cost comparison (this one's easy)
+
+| | AWS | tiny-aws |
+|---|---|---|
+| Compute (1 vCPU, 1 GB) | ~$7.50/month (t3.micro) | Free (your hardware) |
+| Storage (100 GB) | ~$2.30/month (S3 Standard) | Free (your disk) |
+| Load balancer | ~$16/month (ALB) | Free |
+| SQS (1M messages) | $0.40 | Free |
+| Lambda (1M invocations) | $0.20 | Free |
+| Data transfer (100 GB out) | ~$9.00 | Free (your network) |
+| Total for a small app | ~$35-50/month | Electricity + hardware you already own |
+| At scale (real company) | $10K - $10M+/month | You need to buy more machines |
+
+The tradeoff: AWS costs money but requires zero hardware. tiny-aws is free but
+requires you to own and maintain a Linux machine.
 
 ---
 
@@ -312,6 +508,9 @@ What tiny-aws teaches you:
    Networking. Auth policies. These are the things that make AWS hard, and
    tiny-aws deliberately skips most of them so you can see the shape without
    drowning in the details.
+6. **What all those AWS services cost to build.** 8,500 lines gets you a working
+   prototype. Getting from prototype to production-grade is the other 99.99% of
+   the work. Understanding that gap is maybe the most important lesson.
 
 If you want to understand cloud infrastructure — not just use it, but
 understand it — tiny-aws is a reasonable place to start. Then go read the AWS

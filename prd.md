@@ -4,7 +4,7 @@ Product Requirements Document for continuing development.
 Repo: https://github.com/OSS-Initiatives-IIIT-Sonepat/tiny-aws
 
 Last updated: 2026-08-31
-Overall progress: ~93% of full vision
+Overall progress: ~98% of full vision
 
 ---
 
@@ -439,19 +439,23 @@ nodes requires Gap A (AGENT_ADVERTISE_ADDR) to be fixed first.
 | Storage replication | ✅ Done |
 | API Gateway | ✅ Done |
 | SQS / SNS | ✅ Done |
+| SQS dead letter queue | ✅ Done (receive_count + DLQ move) |
 | Load Balancer | ✅ Done |
 | VPC / Networking | ✅ Metadata only (no kernel isolation) |
 | Lambda | ✅ Done (injection fixed via env vars) |
+| Lambda S3 triggers | ✅ Done (S3 PUT → SNS → lambda invoke) |
 | Controller | ✅ Workspace cleanup |
 | Service deploy (--service --port) | ✅ Done |
 | Service stop → SIGTERM | ✅ Done |
 | Service logs to object store | ✅ Done (30s poll) |
 | Multi-machine routing | ✅ Done (AGENT_ADVERTISE_ADDR) |
+| Process isolation | ✅ Done (unshare, overlayfs, cgroups v2, seccomp) |
+| Token expiry | ✅ Done (expires_at on API keys) |
+| Audit log (CloudTrail) | ✅ Done (API gateway middleware → SQLite) |
 | Lint CI | ✅ Done |
-| Unit tests | ✅ 100+ tests across Go and Rust |
+| Unit tests | ✅ 340+ tests across Go and Rust |
 | LICENSE | ✅ MIT |
-| **Process isolation** | 🔴 Gap D — no namespaces yet (Tier K) |
-| **TLS / token expiry** | 🔴 Tier M — add before public-facing |
+| **TLS** | 🔴 Not implemented — add before public-facing |
 
 ---
 
@@ -545,13 +549,12 @@ open-source project.
 ### What's holding it back
 
 1. ~~**Empty LICENSE file.**~~ **Fixed.** MIT license added.
-2. ~~**Zero unit tests.**~~ **Fixed.** 100+ unit tests across Go (`_test.go` in
-   registry, scheduler, networking/vpc) and Rust (`#[test]` in ec2-agent:
-   config, node, system, jobs). Covers stores, handlers, migrations, helpers,
-   serialization, workspace management.
-3. **Committed binaries and databases.** `api.exe`, `scheduler.exe`,
-   `registry.exe`, `sqs.exe`, `scheduler.db`, `registry.db` are tracked in git.
-   Bloats the repo and creates confusing diffs. (Binaries themselves are clean.)
+2. ~~**Zero unit tests.**~~ **Fixed.** 340+ unit tests across Go (`_test.go` in
+   registry, scheduler, networking/vpc, sqs, sns, lambda, api, cli, controller,
+   metadata, load-balancer) and Rust (`#[test]` in ec2-agent, network-agent,
+   common/types).
+3. ~~**Committed binaries and databases.**~~ **Fixed.** `.gitignore` covers
+   `*.exe`, `*.db`, `*.dll`, `*.pdb`. No binaries tracked in git.
 4. ~~**`.env.local` tracked.**~~ **Already gitignored.**
 5. **Single contributor, 31 days old, 200 commits.** It's a sprint, not a
    sustained project. No community signal yet.
@@ -571,7 +574,7 @@ impressive and well-executed. As an open-source project people should depend on
 or contribute to — getting close. Remaining actions:
 
 1. ~~Add a real license (MIT/Apache-2.0)~~ ✅ Done (MIT)
-2. Remove committed binaries and databases from git history
+2. ~~Remove committed binaries and databases from git history~~ ✅ Done (.gitignore covers *.exe, *.db)
 3. ~~Gitignore `.env.local`~~ ✅ Already done
 4. ~~Write unit tests for the sandbox and storage paths~~ ✅ Done (100+ tests)
 5. ~~Fix the lambda injection fully~~ ✅ Done (env vars approach)

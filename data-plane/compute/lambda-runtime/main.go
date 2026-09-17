@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -24,6 +25,15 @@ type Function struct {
 	CreatedAt string `json:"created_at"`
 }
 
+// Trigger wires an event source (S3 PUT, SQS message) to a lambda function.
+type Trigger struct {
+	ID           string `json:"id"`
+	FunctionName string `json:"function_name"`
+	EventSource  string `json:"event_source"`  // "s3:ObjectCreated" or "sqs"
+	SourceName   string `json:"source_name"`   // bucket name or queue name
+	CreatedAt    string `json:"created_at"`
+}
+
 // InvokeResult is returned from a sync invocation.
 type InvokeResult struct {
 	StatusCode int    `json:"status_code"`
@@ -31,7 +41,10 @@ type InvokeResult struct {
 	Error      string `json:"error,omitempty"`
 }
 
-var db *sql.DB
+var (
+	db       *sql.DB
+	trigSeq  uint64
+)
 
 func main() {
 	dbPath := getenv("LAMBDA_DB", "lambda.db")
@@ -52,6 +65,13 @@ func main() {
 			key TEXT NOT NULL,
 			created_at TEXT NOT NULL
 		);
+		CREATE TABLE IF NOT EXISTS triggers (
+			id            TEXT PRIMARY KEY,
+			function_name TEXT NOT NULL,
+			event_source  TEXT NOT NULL,
+			source_name   TEXT NOT NULL,
+			created_at    TEXT NOT NULL
+		);
 	`)
 	if err != nil {
 		log.Fatal(err)
@@ -62,6 +82,13 @@ func main() {
 	http.HandleFunc("GET /functions", handleList)
 	http.HandleFunc("GET /functions/{name}", handleGet)
 	http.HandleFunc("POST /functions/{name}/invoke", handleInvoke)
+	http.HandleFunc("POST /triggers", handleCreateTrigger)
+	http.HandleFunc("GET /triggers", handleListTriggers)
+	http.HandleFunc("DELETE /triggers/{id}", handleDeleteTrigger)
+	http.HandleFunc("POST /trigger-notify", handleTriggerNotify)
+
+	// subscribe to SNS s3:ObjectCreated topic so object store PUTs fire triggers
+	go subscribeToS3Events(listenAddr)
 
 	log.Printf("lambda service listening on %s", listenAddr)
 	log.Fatal(http.ListenAndServe(listenAddr, nil))
@@ -237,4 +264,151 @@ func getenv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// POST /triggers — create a trigger wiring an event source to a function.
+func handleCreateTrigger(w http.ResponseWriter, r *http.Request) {
+	var trig Trigger
+	if err := json.NewDecoder(r.Body).Decode(&trig); err != nil || trig.FunctionName == "" || trig.EventSource == "" {
+		http.Error(w, "function_name and event_source required", http.StatusBadRequest)
+		return
+	}
+	seq := atomic.AddUint64(&trigSeq, 1)
+	trig.ID = fmt.Sprintf("trig-%d", seq)
+	trig.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+
+	_, err := db.Exec(
+		`INSERT INTO triggers (id, function_name, event_source, source_name, created_at) VALUES (?,?,?,?,?)`,
+		trig.ID, trig.FunctionName, trig.EventSource, trig.SourceName, trig.CreatedAt,
+	)
+	if err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	log.Printf("POST /triggers - %s -> %s on %s:%s", trig.ID, trig.FunctionName, trig.EventSource, trig.SourceName)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(trig)
+}
+
+// GET /triggers — list all triggers.
+func handleListTriggers(w http.ResponseWriter, r *http.Request) {
+	rows, _ := db.Query(`SELECT id, function_name, event_source, source_name, created_at FROM triggers`)
+	defer rows.Close()
+	out := []Trigger{}
+	for rows.Next() {
+		var t Trigger
+		rows.Scan(&t.ID, &t.FunctionName, &t.EventSource, &t.SourceName, &t.CreatedAt)
+		out = append(out, t)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+// DELETE /triggers/{id} — remove a trigger.
+func handleDeleteTrigger(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	db.Exec(`DELETE FROM triggers WHERE id = ?`, id)
+	log.Printf("DELETE /triggers/%s", id)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// POST /trigger-notify — called by SNS when an s3:ObjectCreated event fires.
+// Looks up matching triggers and invokes functions asynchronously.
+func handleTriggerNotify(w http.ResponseWriter, r *http.Request) {
+	var notification struct {
+		Topic   string `json:"topic"`
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&notification); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	// parse the inner message (JSON from object store)
+	var event struct {
+		Event  string `json:"event"`
+		Bucket string `json:"bucket"`
+		Key    string `json:"key"`
+		Size   int    `json:"size"`
+	}
+	if err := json.Unmarshal([]byte(notification.Message), &event); err != nil {
+		log.Printf("trigger-notify: bad message: %v", err)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// find matching triggers
+	rows, err := db.Query(
+		`SELECT function_name FROM triggers WHERE event_source = 's3:ObjectCreated' AND (source_name = ? OR source_name = '')`,
+		event.Bucket,
+	)
+	if err != nil {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	defer rows.Close()
+
+	eventJSON, _ := json.Marshal(event)
+	for rows.Next() {
+		var fnName string
+		rows.Scan(&fnName)
+		log.Printf("trigger: s3:ObjectCreated on %s/%s -> invoking %s", event.Bucket, event.Key, fnName)
+		go triggerInvoke(fnName, string(eventJSON))
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// triggerInvoke invokes a function by name with the given event payload.
+func triggerInvoke(fnName, eventPayload string) {
+	lambdaURL := fmt.Sprintf("http://127.0.0.1%s", getenv("LAMBDA_ADDR", ":9007"))
+	resp, err := http.Post(
+		fmt.Sprintf("%s/functions/%s/invoke", lambdaURL, fnName),
+		"application/json",
+		bytes.NewReader([]byte(eventPayload)),
+	)
+	if err != nil {
+		log.Printf("trigger invoke %s failed: %v", fnName, err)
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	log.Printf("trigger invoke %s result: %s", fnName, string(body))
+}
+
+// subscribeToS3Events registers this lambda service as an SNS subscriber
+// for the s3:ObjectCreated topic so the object store PUTs trigger functions.
+func subscribeToS3Events(listenAddr string) {
+	snsURL := getenv("SNS_URL", "")
+	if snsURL == "" {
+		log.Println("SNS_URL not set — lambda triggers disabled")
+		return
+	}
+
+	// wait for SNS to be ready
+	time.Sleep(2 * time.Second)
+
+	// create the topic (idempotent)
+	http.Post(snsURL+"/topics/s3:ObjectCreated", "application/json", nil)
+
+	// subscribe our /trigger-notify endpoint
+	// figure out our own address for SNS to call back
+	lambdaAddr := getenv("LAMBDA_ADVERTISE_ADDR", "")
+	if lambdaAddr == "" {
+		lambdaAddr = fmt.Sprintf("http://127.0.0.1%s", listenAddr)
+	}
+	endpoint := lambdaAddr + "/trigger-notify"
+
+	payload, _ := json.Marshal(map[string]string{"endpoint": endpoint})
+	resp, err := http.Post(
+		snsURL+"/topics/s3:ObjectCreated/subscribe",
+		"application/json",
+		bytes.NewReader(payload),
+	)
+	if err != nil {
+		log.Printf("lambda: failed to subscribe to s3:ObjectCreated: %v", err)
+		return
+	}
+	resp.Body.Close()
+	log.Printf("lambda: subscribed to s3:ObjectCreated topic at %s", endpoint)
 }

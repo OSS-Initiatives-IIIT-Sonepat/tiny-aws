@@ -19,3 +19,7 @@ pub fn metadata_db() -> PathBuf {
         std::env::var("METADATA_DB").unwrap_or_else(|_| "metadata.db".into()),
     )
 }
+
+pub fn sns_url() -> Option<String> {
+    std::env::var("SNS_URL").ok().filter(|s| !s.is_empty())
+}

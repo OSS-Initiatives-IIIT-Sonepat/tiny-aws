@@ -18,6 +18,29 @@ pub struct AppState {
     pub replication: ReplicationPolicy,
 }
 
+// Fire an SNS notification for s3:ObjectCreated events.
+// Best-effort: logs errors but never fails the PUT.
+fn notify_object_created(key: &str, bucket: Option<&str>, size: usize) {
+    let Some(sns_url) = crate::config::sns_url() else {
+        return;
+    };
+    let message = serde_json::json!({
+        "event": "s3:ObjectCreated:Put",
+        "bucket": bucket.unwrap_or(""),
+        "key": key,
+        "size": size,
+    })
+    .to_string();
+    let url = format!("{}/topics/s3:ObjectCreated/publish", sns_url);
+    let payload = serde_json::json!({"message": message});
+    tokio::spawn(async move {
+        let client = reqwest::Client::new();
+        if let Err(e) = client.post(&url).json(&payload).send().await {
+            eprintln!("sns s3:ObjectCreated notify failed: {}", e);
+        }
+    });
+}
+
 // GET /health — liveness check.
 pub async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({"status": "healthy", "service": "object-store"}))
@@ -63,10 +86,12 @@ pub async fn put_object(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("application/octet-stream")
         .to_string();
+    let size = body.len();
     write_object(&state, &key, &headers, body.clone().to_vec())?;
     // C3: replicate to peers after successful local write
     let peers = state.replication.write_peers();
     crate::replication::replicate_put(peers, &key, body, &content_type).await;
+    notify_object_created(&key, None, size);
     Ok(StatusCode::CREATED)
 }
 
@@ -172,8 +197,10 @@ pub async fn put_bucket_object(
     {
         return Err(StatusCode::NOT_FOUND);
     }
+    let size = body.len();
     let object_id = MetadataStore::bucket_object_id(&bucket, &key);
     write_object(&state, &object_id, &headers, body.to_vec())?;
+    notify_object_created(&key, Some(&bucket), size);
     Ok(StatusCode::CREATED)
 }
 

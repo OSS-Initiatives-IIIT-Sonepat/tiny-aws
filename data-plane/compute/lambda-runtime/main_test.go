@@ -24,10 +24,16 @@ func setupLambdaTest(t *testing.T) {
 			handler TEXT NOT NULL, bucket TEXT NOT NULL,
 			key TEXT NOT NULL, created_at TEXT NOT NULL
 		);
+		CREATE TABLE IF NOT EXISTS triggers (
+			id TEXT PRIMARY KEY, function_name TEXT NOT NULL,
+			event_source TEXT NOT NULL, source_name TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		);
 	`)
 	if err != nil {
 		t.Fatal(err)
 	}
+	trigSeq = 0
 	t.Cleanup(func() { db.Close() })
 }
 
@@ -156,5 +162,120 @@ func TestBuildInvokeCommand_Unknown(t *testing.T) {
 	cmd := buildInvokeCommand("ruby3")
 	if cmd != "echo unsupported-runtime" {
 		t.Errorf("unknown runtime cmd = %q", cmd)
+	}
+}
+
+func TestCreateTrigger(t *testing.T) {
+	setupLambdaTest(t)
+
+	body, _ := json.Marshal(map[string]string{
+		"function_name": "process-upload",
+		"event_source":  "s3:ObjectCreated",
+		"source_name":   "my-bucket",
+	})
+	req := httptest.NewRequest("POST", "/triggers", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	handleCreateTrigger(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", w.Code)
+	}
+	var trig Trigger
+	json.Unmarshal(w.Body.Bytes(), &trig)
+	if trig.FunctionName != "process-upload" {
+		t.Errorf("function_name = %q", trig.FunctionName)
+	}
+	if trig.EventSource != "s3:ObjectCreated" {
+		t.Errorf("event_source = %q", trig.EventSource)
+	}
+	if trig.ID == "" {
+		t.Error("expected non-empty id")
+	}
+}
+
+func TestListTriggers(t *testing.T) {
+	setupLambdaTest(t)
+	db.Exec(`INSERT INTO triggers VALUES ('trig-1','fn1','s3:ObjectCreated','bucket1','2026-01-01')`)
+	db.Exec(`INSERT INTO triggers VALUES ('trig-2','fn2','sqs','my-queue','2026-01-01')`)
+
+	req := httptest.NewRequest("GET", "/triggers", nil)
+	w := httptest.NewRecorder()
+	handleListTriggers(w, req)
+
+	var trigs []Trigger
+	json.Unmarshal(w.Body.Bytes(), &trigs)
+	if len(trigs) != 2 {
+		t.Errorf("expected 2 triggers, got %d", len(trigs))
+	}
+}
+
+func TestDeleteTrigger(t *testing.T) {
+	setupLambdaTest(t)
+	db.Exec(`INSERT INTO triggers VALUES ('trig-1','fn1','s3:ObjectCreated','bucket1','2026-01-01')`)
+
+	req := httptest.NewRequest("DELETE", "/triggers/trig-1", nil)
+	req.SetPathValue("id", "trig-1")
+	w := httptest.NewRecorder()
+	handleDeleteTrigger(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", w.Code)
+	}
+
+	var count int
+	db.QueryRow(`SELECT COUNT(*) FROM triggers`).Scan(&count)
+	if count != 0 {
+		t.Errorf("expected 0 triggers, got %d", count)
+	}
+}
+
+func TestTriggerNotify_MatchesBucket(t *testing.T) {
+	setupLambdaTest(t)
+	db.Exec(`INSERT INTO triggers VALUES ('trig-1','process-upload','s3:ObjectCreated','my-bucket','2026-01-01')`)
+	db.Exec(`INSERT INTO functions VALUES ('process-upload','python3','h.h','b','k','2026-01-01')`)
+
+	notification := map[string]string{
+		"topic":   "s3:ObjectCreated",
+		"message": `{"event":"s3:ObjectCreated:Put","bucket":"my-bucket","key":"photo.jpg","size":1024}`,
+	}
+	body, _ := json.Marshal(notification)
+	req := httptest.NewRequest("POST", "/trigger-notify", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	handleTriggerNotify(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+}
+
+func TestTriggerNotify_NoMatch(t *testing.T) {
+	setupLambdaTest(t)
+	// trigger for different bucket
+	db.Exec(`INSERT INTO triggers VALUES ('trig-1','fn1','s3:ObjectCreated','other-bucket','2026-01-01')`)
+
+	notification := map[string]string{
+		"topic":   "s3:ObjectCreated",
+		"message": `{"event":"s3:ObjectCreated:Put","bucket":"my-bucket","key":"photo.jpg","size":1024}`,
+	}
+	body, _ := json.Marshal(notification)
+	req := httptest.NewRequest("POST", "/trigger-notify", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	handleTriggerNotify(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+}
+
+func TestCreateTrigger_MissingFields(t *testing.T) {
+	setupLambdaTest(t)
+
+	body, _ := json.Marshal(map[string]string{"function_name": "fn1"})
+	req := httptest.NewRequest("POST", "/triggers", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	handleCreateTrigger(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
 	}
 }

@@ -13,9 +13,9 @@ func TestListInstances_FilterByNodeID(t *testing.T) {
 	s := NewNodeStore(":memory:")
 	instanceStore = NewInstanceStore(s.DB())
 
-	instanceStore.Create("node-a", "small")
-	instanceStore.Create("node-b", "small")
-	instanceStore.Create("node-a", "micro")
+	instanceStore.Create("node-a", "small", "")
+	instanceStore.Create("node-b", "small", "")
+	instanceStore.Create("node-a", "micro", "")
 
 	loaded, _ := instanceStore.LoadAll()
 	instances = loaded
@@ -40,9 +40,9 @@ func TestListInstances_FilterByStatusStore(t *testing.T) {
 	s := NewNodeStore(":memory:")
 	instanceStore = NewInstanceStore(s.DB())
 
-	inst := instanceStore.Create("node-a", "small")
+	inst := instanceStore.Create("node-a", "small", "")
 	instanceStore.SetStatus(inst.ID, "running")
-	instanceStore.Create("node-a", "small") // stays provisioning
+	instanceStore.Create("node-a", "small", "") // stays provisioning
 
 	loaded, _ := instanceStore.LoadAll()
 	instances = loaded

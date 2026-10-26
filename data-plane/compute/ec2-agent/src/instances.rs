@@ -144,6 +144,86 @@ pub fn nspawn_exec(instance_id: &str) -> Option<Vec<String>> {
     ])
 }
 
+/// Leader PID of a booted nspawn EC2 instance, or None if the machine is not running.
+pub fn machine_leader(instance_id: &str) -> Option<String> {
+    let output = std::process::Command::new("machinectl")
+        .args(["show", instance_id, "-p", "Leader", "--value"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let leader = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if leader.is_empty() || leader == "0" {
+        return None;
+    }
+    Some(leader)
+}
+
+/// Copy a deploy directory into the instance rootfs at /app (visible inside the machine).
+pub fn sync_app_into_instance(instance_id: &str, app_dir: &std::path::Path) -> Result<(), String> {
+    let dest = rootfs_path(instance_id).join("app");
+    let _ = std::fs::remove_dir_all(&dest);
+    std::fs::create_dir_all(&dest).map_err(|e| format!("mkdir instance /app: {}", e))?;
+    let status = std::process::Command::new("cp")
+        .args([
+            "-a",
+            &format!("{}/.", app_dir.display()),
+            dest.to_str().unwrap(),
+        ])
+        .status()
+        .map_err(|e| format!("cp into instance: {}", e))?;
+    if !status.success() {
+        return Err(format!("cp into instance /app failed: {:?}", status.code()));
+    }
+    Ok(())
+}
+
+/// Merge selected trees from a built image into a running instance rootfs (e.g. /opt/hermes).
+pub fn sync_image_into_instance(instance_id: &str, image: &std::path::Path) -> Result<(), String> {
+    let dest = rootfs_path(instance_id);
+    for rel in ["opt", "usr/local"] {
+        let src = image.join(rel);
+        if !src.exists() {
+            continue;
+        }
+        let target = dest.join(rel);
+        std::fs::create_dir_all(&target).map_err(|e| format!("mkdir {}: {}", rel, e))?;
+        let status = std::process::Command::new("cp")
+            .args([
+                "-a",
+                &format!("{}/.", src.display()),
+                target.to_str().unwrap(),
+            ])
+            .status()
+            .map_err(|e| format!("cp image {}: {}", rel, e))?;
+        if !status.success() {
+            return Err(format!("cp image {} failed: {:?}", rel, status.code()));
+        }
+    }
+    Ok(())
+}
+
+/// Wrap a command so it runs inside the EC2 instance namespaces (mount/pid/cgroup/uts/ipc)
+/// while keeping the host network — so the service still binds on the node's LAN IP,
+/// but memory/CPU come from the instance's systemd-nspawn unit.
+pub fn wrap_inside_instance(instance_id: &str, prog: &str, args: &[String]) -> Option<(String, Vec<String>)> {
+    let leader = machine_leader(instance_id)?;
+    let mut wrapped = vec![
+        "-t".into(),
+        leader,
+        "-m".into(),
+        "-u".into(),
+        "-i".into(),
+        "-p".into(),
+        "-C".into(),
+        "--".into(),
+        prog.into(),
+    ];
+    wrapped.extend(args.iter().cloned());
+    Some(("nsenter".into(), wrapped))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

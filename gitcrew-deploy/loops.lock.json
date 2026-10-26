@@ -1,0 +1,12 @@
+{
+  "hermes": {
+    "repository": "https://github.com/NousResearch/hermes-agent.git",
+    "sha": "4d04303818b61bf3aa09278af48356315515965b",
+    "python": "3.14"
+  },
+  "openclaw": {
+    "repository": "https://github.com/openclaw/openclaw.git",
+    "sha": "2e36582cde493ed5ff6a23c4e65fafebf9a3ac44",
+    "node": "24.16.0"
+  }
+}

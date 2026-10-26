@@ -8,7 +8,7 @@ func TestInstanceStoreCreateAndLoadAll(t *testing.T) {
 	s := NewNodeStore(":memory:")
 	is := NewInstanceStore(s.DB())
 
-	inst := is.Create("node-1", "small")
+	inst := is.Create("node-1", "small", "")
 	if inst.ID != "i-1" {
 		t.Errorf("first instance ID = %q, want %q", inst.ID, "i-1")
 	}
@@ -41,8 +41,8 @@ func TestInstanceStoreSequenceIncrement(t *testing.T) {
 	s := NewNodeStore(":memory:")
 	is := NewInstanceStore(s.DB())
 
-	i1 := is.Create("node-1", "small")
-	i2 := is.Create("node-1", "medium")
+	i1 := is.Create("node-1", "small", "")
+	i2 := is.Create("node-1", "medium", "")
 
 	if i1.ID != "i-1" || i2.ID != "i-2" {
 		t.Errorf("IDs = %q, %q; want i-1, i-2", i1.ID, i2.ID)
@@ -53,7 +53,7 @@ func TestInstanceStoreTerminate(t *testing.T) {
 	s := NewNodeStore(":memory:")
 	is := NewInstanceStore(s.DB())
 
-	inst := is.Create("node-1", "small")
+	inst := is.Create("node-1", "small", "")
 	if err := is.Terminate(inst.ID); err != nil {
 		t.Fatalf("Terminate: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestInstanceStoreSetStatus(t *testing.T) {
 	s := NewNodeStore(":memory:")
 	is := NewInstanceStore(s.DB())
 
-	inst := is.Create("node-1", "nano")
+	inst := is.Create("node-1", "nano", "")
 	is.SetStatus(inst.ID, "running")
 
 	loaded, _ := is.LoadAll()
@@ -91,9 +91,10 @@ func TestInstanceTypeSpecs(t *testing.T) {
 		{"small", "100%", 512},
 		{"medium", "200%", 1024},
 		{"large", "400%", 2048},
+		{"xlarge", "800%", 4096},
 	}
 	for _, tt := range tests {
-		inst := is.Create("node-1", tt.itype)
+		inst := is.Create("node-1", tt.itype, "")
 		if inst.CPULimit != tt.cpu {
 			t.Errorf("%s: cpu = %q, want %q", tt.itype, inst.CPULimit, tt.cpu)
 		}
@@ -107,7 +108,7 @@ func TestInstanceStoreDefaultType(t *testing.T) {
 	s := NewNodeStore(":memory:")
 	is := NewInstanceStore(s.DB())
 
-	inst := is.Create("node-1", "")
+	inst := is.Create("node-1", "", "")
 	if inst.InstanceType != "small" {
 		t.Errorf("default type = %q, want %q", inst.InstanceType, "small")
 	}
@@ -117,7 +118,7 @@ func TestInstanceStoreUnknownType(t *testing.T) {
 	s := NewNodeStore(":memory:")
 	is := NewInstanceStore(s.DB())
 
-	inst := is.Create("node-1", "xlarge")
+	inst := is.Create("node-1", "bogus", "")
 	// unknown type falls back to small defaults
 	if inst.CPULimit != "100%" {
 		t.Errorf("unknown type cpu = %q, want %q (small default)", inst.CPULimit, "100%")

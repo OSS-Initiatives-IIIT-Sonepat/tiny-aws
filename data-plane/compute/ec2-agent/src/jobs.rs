@@ -261,29 +261,72 @@ async fn run_service(
         .unwrap_or_else(|_| std::fs::File::create(&log_path).unwrap());
     let log_clone = log_file.try_clone().unwrap_or_else(|_| std::fs::File::create(&log_path).unwrap());
 
-    // Set up cgroup resource limits for this service
-    // ponytail: default 1GB / 200% CPU for services; override via instance spec when nspawn
-    let _cgroup = crate::sandbox::setup_cgroup(&job.job_id, 1024, 200);
-
-    // K1: on Linux, wrap with namespace isolation.
-    // If rootfs is available (from tinyaws.build), use overlayfs + pivot_root for full fs isolation.
-    // Otherwise, use unshare for PID + mount isolation only.
+    // Prefer the real EC2 nspawn instance when instance_id is set: the service runs inside
+    // that machine's mount/pid/cgroup (MemoryMax/CPUQuota from the instance type) while
+    // keeping the host network so ports stay on the node's LAN address.
     #[cfg(unix)]
-    let (prog, args): (String, Vec<String>) = if let (Some(img), Some(scratch)) = (&rootfs_image, &overlay_scratch) {
-        crate::sandbox::wrap_command_with_rootfs(prog, &args, img, &run_dir, scratch)
-    } else if crate::sandbox::enabled() {
-        crate::sandbox::wrap_command(prog, &args)
+    let inside_ec2 = !job.instance_id.is_empty()
+        && crate::instances::rootfs_path(&job.instance_id).exists()
+        && crate::instances::machine_leader(&job.instance_id).is_some();
+    #[cfg(not(unix))]
+    let inside_ec2 = false;
+
+    #[cfg(unix)]
+    let (prog, args, workdir): (String, Vec<String>, PathBuf) = if inside_ec2 {
+        if let Err(e) = crate::instances::sync_app_into_instance(&job.instance_id, &run_dir) {
+            eprintln!("service {}: sync into instance failed: {}", job.job_id, e);
+            let _ = report_result(&client, &scheduler_url, &job.job_id, "failed", -1, String::new(), e).await;
+            return;
+        }
+        if let Some(ref img) = rootfs_image {
+            if let Err(e) = crate::instances::sync_image_into_instance(&job.instance_id, img) {
+                eprintln!("service {}: sync image into instance failed: {}", job.job_id, e);
+                let _ = report_result(&client, &scheduler_url, &job.job_id, "failed", -1, String::new(), e).await;
+                return;
+            }
+        }
+        // start command already targets /app after pivot; inside the instance cwd is /app
+        let start_args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let (p, a) = crate::instances::wrap_inside_instance(&job.instance_id, prog, &start_args)
+            .unwrap_or_else(|| (prog.into(), start_args));
+        println!(
+            "service {}: running inside EC2 instance {}",
+            job.job_id, job.instance_id
+        );
+        (p, a, PathBuf::from("/app"))
     } else {
-        (prog.into(), args.into_iter().map(|s| s.to_string()).collect())
+        // Host path: own cgroup + optional overlay rootfs (no instance_id / machine down).
+        let _cgroup = crate::sandbox::setup_cgroup(&job.job_id, 1024, 200);
+        let (p, a) = if let (Some(img), Some(scratch)) = (&rootfs_image, &overlay_scratch) {
+            crate::sandbox::wrap_command_with_rootfs(prog, &args, img, &run_dir, scratch)
+        } else if crate::sandbox::enabled() {
+            crate::sandbox::wrap_command(prog, &args)
+        } else {
+            (prog.into(), args.into_iter().map(|s| s.to_string()).collect())
+        };
+        (p, a, run_dir.clone())
     };
     #[cfg(not(unix))]
-    let (prog, args): (String, Vec<String>) = (prog.into(), args.into_iter().map(|s| s.to_string()).collect());
+    let (prog, args, workdir): (String, Vec<String>, PathBuf) = {
+        let _cgroup = crate::sandbox::setup_cgroup(&job.job_id, 1024, 200);
+        (
+            prog.into(),
+            args.into_iter().map(|s| s.to_string()).collect(),
+            run_dir.clone(),
+        )
+    };
 
     let mut cmd = std::process::Command::new(&prog);
     cmd.args(&args)
-        .current_dir(&run_dir)
         .stdout(log_file)
         .stderr(log_clone);
+    // nsenter into a machine keeps the caller's cwd semantics messy — only set cwd on host path.
+    if !inside_ec2 {
+        cmd.current_dir(&workdir);
+    } else {
+        // Force the start script to cd /app inside the instance.
+        let _ = workdir;
+    }
 
     // inject user-defined environment variables
     for (k, v) in &job.env_vars {

@@ -11,14 +11,14 @@ func TestInstanceStoreSequenceRestoredFromDB(t *testing.T) {
 
 	// First store: create some instances so the DB has rows.
 	is1 := NewInstanceStore(db)
-	is1.Create("node-1", "small") // i-1
-	is1.Create("node-1", "small") // i-2
-	is1.Create("node-1", "small") // i-3
+	is1.Create("node-1", "small", "") // i-1
+	is1.Create("node-1", "small", "") // i-2
+	is1.Create("node-1", "small", "") // i-3
 
 	// Simulate restart: create a new InstanceStore from the same DB.
 	// It should read max sequence (3) from existing rows.
 	is2 := NewInstanceStore(db)
-	inst := is2.Create("node-1", "small")
+	inst := is2.Create("node-1", "small", "")
 	if inst.ID != "i-4" {
 		t.Errorf("after restart, next ID = %q, want %q", inst.ID, "i-4")
 	}
@@ -30,7 +30,7 @@ func TestInstanceStoreSequenceRestoredEmpty(t *testing.T) {
 
 	// No pre-existing instances — sequence should start at 0.
 	is := NewInstanceStore(db)
-	inst := is.Create("node-1", "nano")
+	inst := is.Create("node-1", "nano", "")
 	if inst.ID != "i-1" {
 		t.Errorf("first ID = %q, want %q", inst.ID, "i-1")
 	}
@@ -53,7 +53,7 @@ func TestInstanceStoreSequenceRestoredFromManualInsert(t *testing.T) {
 
 	// New store should pick up i-20 as max (last rowid).
 	is2 := NewInstanceStore(db)
-	inst := is2.Create("node-1", "small")
+	inst := is2.Create("node-1", "small", "")
 	if inst.ID != "i-21" {
 		t.Errorf("after manual insert, next ID = %q, want %q", inst.ID, "i-21")
 	}

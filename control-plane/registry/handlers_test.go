@@ -10,7 +10,7 @@ import (
 
 func TestHandleInstanceGet_Found(t *testing.T) {
 	setupHandlerTest(t)
-	inst := instanceStore.Create("node-1", "small")
+	inst := instanceStore.Create("node-1", "small", "")
 	instances = append(instances, inst)
 
 	req := httptest.NewRequest("GET", "/instances/i-1", nil)
@@ -43,8 +43,8 @@ func TestHandleInstanceGet_NotFound(t *testing.T) {
 
 func TestListInstances_FilterByStatus(t *testing.T) {
 	setupHandlerTest(t)
-	inst1 := instanceStore.Create("node-1", "small")
-	inst2 := instanceStore.Create("node-1", "small")
+	inst1 := instanceStore.Create("node-1", "small", "")
+	inst2 := instanceStore.Create("node-1", "small", "")
 	instanceStore.SetStatus(inst2.ID, "terminated")
 	inst2.Status = "terminated"
 	instances = append(instances, inst1, inst2)
@@ -62,7 +62,7 @@ func TestListInstances_FilterByStatus(t *testing.T) {
 
 func TestHandleInstancePatch(t *testing.T) {
 	setupHandlerTest(t)
-	inst := instanceStore.Create("node-1", "small")
+	inst := instanceStore.Create("node-1", "small", "")
 	instances = append(instances, inst)
 
 	body, _ := json.Marshal(map[string]string{"status": "running"})

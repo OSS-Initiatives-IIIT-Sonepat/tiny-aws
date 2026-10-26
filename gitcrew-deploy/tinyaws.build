@@ -1,0 +1,6 @@
+# Finish OpenClaw on the image job-18 already built.
+# pnpm install succeeded. The compile stopped because the cgroup memory limit
+# is not visible inside the chroot. 3072 MB is the explicit heap inside the 4 GB budget.
+base: /var/lib/tinyaws/images/3fd55562a38caaaf
+run: mount -t proc proc /proc && cd /opt/openclaw && OPENCLAW_TSDOWN_MAX_OLD_SPACE_MB=3072 pnpm build && umount /proc
+start: GITCREW_HERMES_ROOT=/opt/hermes GITCREW_OPENCLAW_ROOT=/opt/openclaw GITCREW_PYTHON=/opt/hermes/.venv/bin/python GITCREW_SANDBOX_ENTRY=/app/sandbox/main.mjs GITCREW_WORKER_SECRET=gitcrew-local GITCREW_WORKER_PORT=8787 node /app/worker/server.mjs

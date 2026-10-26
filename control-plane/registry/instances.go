@@ -74,24 +74,25 @@ func NewInstanceStore(db *sql.DB) *InstanceStore {
 // Saves instance row to SQLite.
 func (s *InstanceStore) Save(inst Instance) error {
 	_, err := s.db.Exec(
-		`INSERT INTO instances (id, node_id, status, instance_type, cpu_limit, mem_limit_mb, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO instances (id, node_id, status, instance_type, cpu_limit, mem_limit_mb, base_image, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   node_id = excluded.node_id,
 		   status = excluded.status,
 		   instance_type = excluded.instance_type,
 		   cpu_limit = excluded.cpu_limit,
 		   mem_limit_mb = excluded.mem_limit_mb,
+		   base_image = excluded.base_image,
 		   created_at = excluded.created_at`,
 		inst.ID, inst.NodeID, inst.Status, inst.InstanceType, inst.CPULimit, inst.MemLimitMB,
-		inst.CreatedAt.Format(time.RFC3339),
+		inst.BaseImage, inst.CreatedAt.Format(time.RFC3339),
 	)
 	return err
 }
 
 // Loads all instances from DB.
 func (s *InstanceStore) LoadAll() ([]Instance, error) {
-	rows, err := s.db.Query(`SELECT id, node_id, status, instance_type, cpu_limit, mem_limit_mb, created_at FROM instances`)
+	rows, err := s.db.Query(`SELECT id, node_id, status, instance_type, cpu_limit, mem_limit_mb, base_image, created_at FROM instances`)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +102,7 @@ func (s *InstanceStore) LoadAll() ([]Instance, error) {
 	for rows.Next() {
 		var inst Instance
 		var created string
-		if err := rows.Scan(&inst.ID, &inst.NodeID, &inst.Status, &inst.InstanceType, &inst.CPULimit, &inst.MemLimitMB, &created); err != nil {
+		if err := rows.Scan(&inst.ID, &inst.NodeID, &inst.Status, &inst.InstanceType, &inst.CPULimit, &inst.MemLimitMB, &inst.BaseImage, &created); err != nil {
 			return nil, err
 		}
 		inst.CreatedAt, err = time.Parse(time.RFC3339, created)
@@ -121,10 +122,11 @@ var instanceTypeSpec = map[string][2]interface{}{
 	"small":  {"100%", 512},
 	"medium": {"200%", 1024},
 	"large":  {"400%", 2048},
+	"xlarge": {"800%", 4096},
 }
 
 // Creates a new running instance on the given compute node.
-func (s *InstanceStore) Create(nodeID, instanceType string) Instance {
+func (s *InstanceStore) Create(nodeID, instanceType, baseImage string) Instance {
 	if instanceType == "" {
 		instanceType = "small"
 	}
@@ -140,6 +142,7 @@ func (s *InstanceStore) Create(nodeID, instanceType string) Instance {
 		InstanceType: instanceType,
 		CPULimit:     spec[0].(string),
 		MemLimitMB:   spec[1].(int),
+		BaseImage:    baseImage,
 		CreatedAt:    time.Now().UTC(),
 	}
 	if err := s.Save(inst); err != nil {
@@ -255,6 +258,7 @@ func listInstances(w http.ResponseWriter, r *http.Request) {
 func launchInstance(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		InstanceType string `json:"instance_type"`
+		BaseImage    string `json:"base_image"`
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&req)
@@ -266,7 +270,7 @@ func launchInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inst := instanceStore.Create(node.ID, req.InstanceType)
+	inst := instanceStore.Create(node.ID, req.InstanceType, req.BaseImage)
 
 	instancesMu.Lock()
 	instances = append(instances, inst)

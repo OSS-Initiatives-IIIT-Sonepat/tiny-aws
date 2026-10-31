@@ -1,6 +1,7 @@
 <div align="center">
 
- <img width="200" height="200" alt="patrick_from_screen" src="https://github.com/user-attachments/assets/a9f2887d-8ac5-4e50-9beb-be75b5ae2cb3" />
+<img width="2172" height="724" alt="Tiny AWS_ A Minimal Cloud Replica" src="https://github.com/user-attachments/assets/cf37d4c3-6567-4893-8348-bb49cc4fbf98" />
+
 
 <h1> tiny-aws</h1>
 </br>
